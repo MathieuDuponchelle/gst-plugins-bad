@@ -92,6 +92,7 @@ gst_frei0r_filter_transform (GstBaseTransform * trans, GstBuffer * inbuf,
   GstFrei0rFilter *self = GST_FREI0R_FILTER (trans);
   GstFrei0rFilterClass *klass = GST_FREI0R_FILTER_GET_CLASS (trans);
   gdouble time;
+  GstMapInfo inmap, outmap;
 
   if (G_UNLIKELY (self->width <= 0 || self->height <= 0))
     return GST_FLOW_NOT_NEGOTIATED;
@@ -107,14 +108,20 @@ gst_frei0r_filter_transform (GstBaseTransform * trans, GstBuffer * inbuf,
   time = ((gdouble) GST_BUFFER_TIMESTAMP (inbuf)) / GST_SECOND;
 
   GST_OBJECT_LOCK (self);
+
+  gst_buffer_map (inbuf, &inmap, GST_MAP_READ);
+  gst_buffer_map (outbuf, &outmap, GST_MAP_WRITE);
+
   if (klass->ftable->update2)
     klass->ftable->update2 (self->f0r_instance, time,
-        (const guint32 *) GST_BUFFER_DATA (inbuf), NULL, NULL,
-        (guint32 *) GST_BUFFER_DATA (outbuf));
+        (const guint32 *) inmap.data, NULL, NULL, (guint32 *) outmap.data);
   else
     klass->ftable->update (self->f0r_instance, time,
-        (const guint32 *) GST_BUFFER_DATA (inbuf),
-        (guint32 *) GST_BUFFER_DATA (outbuf));
+        (const guint32 *) inmap.data, (guint32 *) outmap.data);
+
+  gst_buffer_unmap (outbuf, &outmap);
+  gst_buffer_unmap (inbuf, &inmap);
+
   GST_OBJECT_UNLOCK (self);
 
   return GST_FLOW_OK;
