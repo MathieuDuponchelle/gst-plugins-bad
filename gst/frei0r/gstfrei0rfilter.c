@@ -42,10 +42,13 @@ gst_frei0r_filter_set_caps (GstBaseTransform * trans, GstCaps * incaps,
     GstCaps * outcaps)
 {
   GstFrei0rFilter *self = GST_FREI0R_FILTER (trans);
-  GstVideoFormat fmt;
+  GstVideoInfo info;
 
-  if (!gst_video_format_parse_caps (incaps, &fmt, &self->width, &self->height))
+  if (!gst_video_info_from_caps (&info, incaps))
     return FALSE;
+
+  self->width = info.width;
+  self->height = info.height;
 
   return TRUE;
 }
