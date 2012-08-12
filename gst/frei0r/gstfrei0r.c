@@ -566,7 +566,7 @@ register_plugin (GstPlugin * plugin, const gchar * vendor,
       break;
     case F0R_PLUGIN_TYPE_MIXER2:
     case F0R_PLUGIN_TYPE_MIXER3:
-      ret = gst_frei0r_mixer_register (plugin, vendor, &info, &ftable);
+      /*ret = gst_frei0r_mixer_register (plugin, vendor, &info, &ftable); */
       break;
     default:
       break;
