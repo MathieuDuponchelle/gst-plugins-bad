@@ -39,11 +39,15 @@ static gboolean
 gst_frei0r_src_set_caps (GstBaseSrc * src, GstCaps * caps)
 {
   GstFrei0rSrc *self = GST_FREI0R_SRC (src);
+  GstVideoInfo info;
 
-  if (!gst_video_format_parse_caps (caps, &self->fmt, &self->width,
-          &self->height)
-      || !gst_video_parse_caps_framerate (caps, &self->fps_n, &self->fps_d))
+  if (!gst_video_info_from_caps (&info, caps))
     return FALSE;
+
+  self->width = info.width;
+  self->height = info.height;
+  self->fps_n = info.fps_n;
+  self->fps_d = info.fps_d;
 
   return TRUE;
 }
