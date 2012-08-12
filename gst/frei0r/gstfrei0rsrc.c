@@ -75,6 +75,7 @@ gst_frei0r_src_create (GstPushSrc * src, GstBuffer ** buf)
   GstBuffer *outbuf = NULL;
   GstClockTime timestamp;
   gdouble time;
+  GstMapInfo outmap;
 
   *buf = NULL;
 
@@ -90,23 +91,21 @@ gst_frei0r_src_create (GstPushSrc * src, GstBuffer ** buf)
       return GST_FLOW_ERROR;
   }
 
-  newsize = gst_video_format_get_size (self->fmt, self->width, self->height);
+  newsize = self->info.size;
 
   ret =
-      gst_pad_alloc_buffer_and_set_caps (GST_BASE_SRC_PAD (src),
-      GST_BUFFER_OFFSET_NONE, newsize, GST_PAD_CAPS (GST_BASE_SRC_PAD (src)),
+      GST_BASE_SRC_GET_CLASS (src)->alloc (GST_BASE_SRC (src), 0, newsize,
       &outbuf);
+
   if (ret != GST_FLOW_OK)
     return ret;
 
   /* Format might have changed */
-  size = GST_BUFFER_SIZE (outbuf);
-  newsize = gst_video_format_get_size (self->fmt, self->width, self->height);
+  size = gst_buffer_get_size (outbuf);
 
   if (size != newsize) {
     gst_buffer_unref (outbuf);
     outbuf = gst_buffer_new_and_alloc (newsize);
-    gst_buffer_set_caps (outbuf, GST_PAD_CAPS (GST_BASE_SRC_PAD (src)));
   }
 
   GST_BUFFER_TIMESTAMP (outbuf) = timestamp =
@@ -132,12 +131,18 @@ gst_frei0r_src_create (GstPushSrc * src, GstBuffer ** buf)
   time = ((gdouble) GST_BUFFER_TIMESTAMP (outbuf)) / GST_SECOND;
 
   GST_OBJECT_LOCK (self);
+
+  gst_buffer_map (outbuf, &outmap, GST_MAP_WRITE);
+
   if (klass->ftable->update2)
     klass->ftable->update2 (self->f0r_instance, time, NULL, NULL, NULL,
-        (guint32 *) GST_BUFFER_DATA (outbuf));
+        (guint32 *) outmap.data);
   else
     klass->ftable->update (self->f0r_instance, time, NULL,
-        (guint32 *) GST_BUFFER_DATA (outbuf));
+        (guint32 *) outmap.data);
+
+  gst_buffer_unmap (outbuf, &outmap);
+
   GST_OBJECT_UNLOCK (self);
 
   *buf = outbuf;
