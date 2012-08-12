@@ -53,7 +53,7 @@ gst_frei0r_src_set_caps (GstBaseSrc * src, GstCaps * caps)
 }
 
 static GstCaps *
-gst_frei0r_src_get_caps (GstBaseSrc * src)
+gst_frei0r_src_get_caps (GstBaseSrc * src, GstCaps * filter)
 {
   GstCaps *caps;
 
@@ -187,7 +187,7 @@ gst_frei0r_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
   GstFrei0rSrc *self = GST_FREI0R_SRC (bsrc);
 
   segment->time = segment->start;
-  time = segment->last_stop;
+  time = segment->position;
 
   /* now move to the time indicated */
   if (self->fps_n) {
@@ -273,8 +273,8 @@ error:
   }
 }
 
-static void
-gst_frei0r_src_src_fixate (GstPad * pad, GstCaps * caps)
+static GstCaps *
+gst_frei0r_src_src_fixate (GstBaseSrc * src, GstCaps * caps)
 {
   GstStructure *structure;
 
@@ -283,6 +283,7 @@ gst_frei0r_src_src_fixate (GstPad * pad, GstCaps * caps)
   gst_structure_fixate_field_nearest_int (structure, "width", 320);
   gst_structure_fixate_field_nearest_int (structure, "height", 240);
   gst_structure_fixate_field_nearest_fraction (structure, "framerate", 30, 1);
+  return caps;
 }
 
 static void
@@ -379,6 +380,7 @@ gst_frei0r_src_class_init (GstFrei0rSrcClass * klass,
   gstbasesrc_class->query = gst_frei0r_src_query;
   gstbasesrc_class->start = gst_frei0r_src_start;
   gstbasesrc_class->stop = gst_frei0r_src_stop;
+  gstbasesrc_class->fixate = GST_DEBUG_FUNCPTR (gst_frei0r_src_src_fixate);
 
   gstpushsrc_class->create = GST_DEBUG_FUNCPTR (gst_frei0r_src_create);
 }
@@ -386,12 +388,8 @@ gst_frei0r_src_class_init (GstFrei0rSrcClass * klass,
 static void
 gst_frei0r_src_init (GstFrei0rSrc * self, GstFrei0rSrcClass * klass)
 {
-  GstPad *pad = GST_BASE_SRC_PAD (self);
-
   self->property_cache =
       gst_frei0r_property_cache_init (klass->properties, klass->n_properties);
-
-  gst_pad_set_fixatecaps_function (pad, gst_frei0r_src_src_fixate);
 
   gst_base_src_set_format (GST_BASE_SRC_CAST (self), GST_FORMAT_TIME);
 }
