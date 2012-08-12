@@ -55,8 +55,11 @@ gst_frei0r_src_set_caps (GstBaseSrc * src, GstCaps * caps)
 static GstCaps *
 gst_frei0r_src_get_caps (GstBaseSrc * src)
 {
-  if (GST_PAD_CAPS (GST_BASE_SRC_PAD (src)))
-    return gst_caps_ref (GST_PAD_CAPS (GST_BASE_SRC_PAD (src)));
+  GstCaps *caps;
+
+  caps = gst_pad_get_current_caps (GST_BASE_SRC_PAD (src));
+  if (caps)
+    return (caps);
   else
     return
         gst_caps_copy (gst_pad_get_pad_template_caps (GST_BASE_SRC_PAD (src)));
