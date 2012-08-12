@@ -28,31 +28,31 @@
 #include "gstfrei0r.h"
 
 G_BEGIN_DECLS
-
 #define GST_FREI0R_SRC(obj) \
   ((GstFrei0rSrc *) obj)
 #define GST_FREI0R_SRC_CLASS(klass) \
   ((GstFrei0rSrcClass *) klass)
 #define GST_FREI0R_SRC_GET_CLASS(obj) \
   ((GstFrei0rSrcClass *) g_type_class_peek (G_TYPE_FROM_INSTANCE (obj)))
-
 typedef struct _GstFrei0rSrc GstFrei0rSrc;
 typedef struct _GstFrei0rSrcClass GstFrei0rSrcClass;
 
-struct _GstFrei0rSrc {
+struct _GstFrei0rSrc
+{
   GstPushSrc parent;
 
   f0r_instance_t *f0r_instance;
   GstFrei0rPropertyValue *property_cache;
 
-  GstVideoFormat fmt;
+  GstVideoInfo info;
   gint width, height;
   gint fps_n, fps_d;
 
   guint64 n_frames;
 };
 
-struct _GstFrei0rSrcClass {
+struct _GstFrei0rSrcClass
+{
   GstPushSrcClass parent;
 
   f0r_plugin_info_t *info;
@@ -62,8 +62,7 @@ struct _GstFrei0rSrcClass {
   gint n_properties;
 };
 
-GstFrei0rPluginRegisterReturn gst_frei0r_src_register (GstPlugin *plugin, const gchar * vendor, const f0r_plugin_info_t *info, const GstFrei0rFuncTable *ftable);
+GstFrei0rPluginRegisterReturn gst_frei0r_src_register (GstPlugin * plugin, const gchar * vendor, const f0r_plugin_info_t * info, const GstFrei0rFuncTable * ftable);
 
 G_END_DECLS
-
 #endif /* __GST_FREI0R_SRC_H__ */
