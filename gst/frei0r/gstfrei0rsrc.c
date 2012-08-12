@@ -41,13 +41,13 @@ gst_frei0r_src_set_caps (GstBaseSrc * src, GstCaps * caps)
   GstFrei0rSrc *self = GST_FREI0R_SRC (src);
   GstVideoInfo info;
 
-  if (!gst_video_info_from_caps (&info, caps))
+  if (!gst_video_info_from_caps (&(self->info), caps))
     return FALSE;
 
-  self->width = info.width;
-  self->height = info.height;
-  self->fps_n = info.fps_n;
-  self->fps_d = info.fps_d;
+  self->width = self->info.width;
+  self->height = self->info.height;
+  self->fps_n = self->info.fps_n;
+  self->fps_d = self->info.fps_d;
 
   return TRUE;
 }
