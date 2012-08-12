@@ -39,7 +39,6 @@ static gboolean
 gst_frei0r_src_set_caps (GstBaseSrc * src, GstCaps * caps)
 {
   GstFrei0rSrc *self = GST_FREI0R_SRC (src);
-  GstVideoInfo info;
 
   if (!gst_video_info_from_caps (&(self->info), caps))
     return FALSE;
@@ -171,7 +170,6 @@ gst_frei0r_src_stop (GstBaseSrc * basesrc)
     self->f0r_instance = NULL;
   }
 
-  self->fmt = GST_VIDEO_FORMAT_UNKNOWN;
   self->width = self->height = 0;
   self->fps_n = self->fps_d = 0;
   self->n_frames = 0;
