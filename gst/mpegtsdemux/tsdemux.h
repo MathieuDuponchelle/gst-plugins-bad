@@ -82,6 +82,9 @@ struct _GstTSDemux
 
   /* Pending seek rate (default 1.0) */
   gdouble rate;
+
+  /* Used when seeking for a keyframe to go backward in the stream */
+  guint64 last_seek_offset;
 };
 
 struct _GstTSDemuxClass
