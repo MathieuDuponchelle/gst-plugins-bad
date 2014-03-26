@@ -23,6 +23,7 @@
 #include <gst/gst.h>
 #include <gst/base/gstcollectpads.h>
 #include <gst/video/video.h>
+#include "basemixer/gstbasemixer.h"
 
 G_BEGIN_DECLS
 
@@ -78,7 +79,7 @@ struct _GstSSimOutputContext {
  * The ssim object structure.
  */
 struct _GstSSim {
-  GstElement      element;
+  GstBasemixer      basemixer;
 
   /* Array of GstSSimOutputContext */
   GPtrArray      *src;
@@ -130,7 +131,7 @@ struct _GstSSim {
 };
 
 struct _GstSSimClass {
-  GstElementClass parent_class;
+  GstBasemixerClass parent_class;
 };
 
 GType    gst_ssim_get_type (void);

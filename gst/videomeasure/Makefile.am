@@ -1,19 +1,30 @@
 plugin_LTLIBRARIES = libgstvideomeasure.la 
 
-noinst_HEADERS = gstvideomeasure_ssim.h gstvideomeasure_collector.h
+noinst_HEADERS = gstvideomeasure_ssim.h \
+		 basemixer/gstbasemixer.h \
+		 basemixer/gstvideoconvertorc.h \
+		 basemixer/gstbasemixerpad.h \
+		 basemixer/gstcms.h \
+		 basemixer/videoconvert.h
+
+ORC_SOURCE=basemixer/videoconvert-orc
+include $(top_srcdir)/common/orc.mak
+
+nodist_libgstvideomeasure_la_SOURCES = $(ORC_NODIST_SOURCES)
 
 libgstvideomeasure_la_SOURCES = \
-    gstvideomeasure.c \
-    gstvideomeasure.h \
-    gstvideomeasure_ssim.c \
-    gstvideomeasure_collector.c
+    basemixer/gstbasemixer.c \
+    basemixer/videoconvert.c \
+    basemixer/gstcms.c \
+    gstvideomeasure_ssim.c
 
 libgstvideomeasure_la_CFLAGS = $(GST_PLUGINS_BAD_CFLAGS) \
     $(GST_PLUGINS_BASE_CFLAGS) \
     $(GST_BASE_CFLAGS) \
-    $(GST_CFLAGS)
+    $(GST_CFLAGS) \
+    $(ORC_CFLAGS)
 libgstvideomeasure_la_LIBADD = $(GST_PLUGINS_BASE_LIBS) \
-    -lgstvideo-@GST_API_VERSION@ $(GST_BASE_LIBS) $(GST_LIBS) $(LIBM)
+    -lgstvideo-@GST_API_VERSION@ $(GST_BASE_LIBS) $(GST_LIBS) $(LIBM) $(ORC_LIBS)
 libgstvideomeasure_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstvideomeasure_la_LIBTOOLFLAGS = $(GST_PLUGIN_LIBTOOLFLAGS)
 
