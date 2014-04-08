@@ -778,7 +778,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
 
       if ((pad->buffer && start_time < GST_BUFFER_TIMESTAMP (pad->buffer))
           || (pad->queued && start_time < GST_BUFFER_TIMESTAMP (pad->queued))) {
-        GST_WARNING_OBJECT (pad, "Buffer from the past, dropping");
+        GST_ERROR_OBJECT (pad, "Buffer from the past, dropping");
         gst_buffer_unref (buf);
         need_more_data = TRUE;
         continue;
@@ -797,6 +797,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
           pad->queued = buf;
           gst_buffer_unref (buf);
           pad->queued_vinfo = pad->info;
+          GST_ERROR ("end time is -1 and nothing queued");
           need_more_data = TRUE;
           continue;
         }
@@ -807,7 +808,10 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
 
       /* Check if it's inside the segment */
       if (start_time >= segment->stop || end_time < segment->start) {
-        GST_DEBUG_OBJECT (pad, "Buffer outside the segment");
+        GST_ERROR_OBJECT (pad,
+            "Buffer outside the segment : %lld %lld %lld %lld",
+            (long long int) start_time, (long long int) end_time,
+            (long long int) segment->start, (long long int) segment->stop);
 
         if (buf == pad->queued) {
           gst_buffer_unref (buf);
@@ -837,7 +841,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
       }
 
       if (pad->end_time != -1 && pad->end_time > end_time) {
-        GST_DEBUG_OBJECT (pad, "Buffer from the past, dropping");
+        GST_ERROR_OBJECT (pad, "Buffer from the past, dropping");
         if (buf == pad->queued) {
           gst_buffer_unref (buf);
           gst_buffer_replace (&pad->queued, NULL);
@@ -870,7 +874,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
             GST_TIME_ARGS (start_time));
         eos = FALSE;
       } else {
-        GST_DEBUG_OBJECT (pad, "Too old buffer -- dropping");
+        GST_ERROR_OBJECT (pad, "Too old buffer -- dropping");
         if (buf == pad->queued) {
           gst_buffer_replace (&pad->queued, NULL);
         } else {
@@ -885,8 +889,10 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
         if (pad->end_time <= output_start_time) {
           gst_buffer_replace (&pad->buffer, NULL);
           pad->start_time = pad->end_time = -1;
-          if (!bpad->eos)
+          if (!bpad->eos) {
+            GST_ERROR ("I just need more data");
             need_more_data = TRUE;
+          }
         } else if (!bpad->eos) {
           eos = FALSE;
         }
@@ -1082,6 +1088,7 @@ gst_basemixer_aggregate (GstBaseAggregator * agg)
     mix->send_caps = FALSE;
   }
 
+  GST_ERROR ("locking mixer");
   GST_BASE_MIXER_LOCK (mix);
 
   if (mix->newseg_pending) {
@@ -1117,6 +1124,7 @@ gst_basemixer_aggregate (GstBaseAggregator * agg)
     }
   }
 
+  GST_ERROR ("maybe pushing tags");
   if (G_UNLIKELY (mix->pending_tags)) {
     gst_pad_push_event (agg->srcpad, gst_event_new_tag (mix->pending_tags));
     mix->pending_tags = NULL;
@@ -1125,15 +1133,16 @@ gst_basemixer_aggregate (GstBaseAggregator * agg)
   if (mix->segment.stop != -1)
     output_end_time = MIN (output_end_time, mix->segment.stop);
 
+  GST_ERROR ("filling queues");
   res = gst_basemixer_fill_queues (mix, output_start_time, output_end_time);
 
   if (res == 0) {
-    GST_DEBUG_OBJECT (mix, "Need more data for decisions");
+    GST_ERROR_OBJECT (mix, "Need more data for decisions");
     ret = GST_FLOW_OK;
     goto done;
   } else if (res == -1) {
     GST_BASE_MIXER_UNLOCK (mix);
-    GST_DEBUG_OBJECT (mix, "All sinkpads are EOS -- forwarding");
+    GST_ERROR_OBJECT (mix, "All sinkpads are EOS -- forwarding");
     gst_pad_push_event (agg->srcpad, gst_event_new_eos ());
     ret = GST_FLOW_EOS;
     goto done_unlocked;
@@ -1143,6 +1152,7 @@ gst_basemixer_aggregate (GstBaseAggregator * agg)
     goto done;
   }
 
+  GST_ERROR ("doing qos");
   jitter = gst_basemixer_do_qos (mix, output_start_time);
   if (jitter <= 0) {
     ret =
@@ -1174,7 +1184,7 @@ gst_basemixer_aggregate (GstBaseAggregator * agg)
 
   GST_BASE_MIXER_UNLOCK (mix);
   if (outbuf) {
-    GST_LOG_OBJECT (mix,
+    GST_ERROR_OBJECT (mix,
         "Pushing buffer with ts %" GST_TIME_FORMAT " and duration %"
         GST_TIME_FORMAT, GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (outbuf)),
         GST_TIME_ARGS (GST_BUFFER_DURATION (outbuf)));
@@ -1984,7 +1994,6 @@ gst_basemixer_init (GstBasemixer * mix)
       GST_DEBUG_FUNCPTR (gst_basemixer_src_query));
   gst_pad_set_event_function (GST_PAD (agg->srcpad),
       GST_DEBUG_FUNCPTR (gst_basemixer_src_event));
-  gst_element_add_pad (GST_ELEMENT (mix), agg->srcpad);
 
   mix->current_caps = NULL;
   mix->pending_tags = NULL;
