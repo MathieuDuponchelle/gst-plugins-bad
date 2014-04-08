@@ -26,7 +26,7 @@
 
 #include "gstbasemixerpad.h"
 
-#include <gst/base/gstcollectpads.h>
+#include <gst/base/gstbaseaggregator.h>
 
 G_BEGIN_DECLS
 
@@ -50,7 +50,7 @@ typedef struct _GstBasemixerClass GstBasemixerClass;
  */
 struct _GstBasemixer
 {
-  GstElement element;
+  GstBaseAggregator aggregator;
 
   /* < private > */
 
@@ -62,9 +62,6 @@ struct _GstBasemixer
 
   /* Lock to prevent two src setcaps from happening at the same time  */
   GMutex setcaps_lock;
-
-  /* Sink pads using Collect Pads 2*/
-  GstCollectPads *collect;
 
   /* sinkpads, a GSList of GstBasemixerPads */
   GSList *sinkpads;
@@ -97,7 +94,7 @@ struct _GstBasemixer
 
 struct _GstBasemixerClass
 {
-  GstElementClass parent_class;
+  GstBaseAggregatorClass parent_class;
 
   GstBasemixerPad*               (*create_new_pad)      (GstBasemixer *basemixer, GstPadTemplate *templ,
 							 const gchar* name, const GstCaps *caps);

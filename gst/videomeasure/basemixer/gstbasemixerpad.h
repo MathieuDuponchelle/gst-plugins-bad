@@ -24,7 +24,7 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
-#include <gst/base/gstcollectpads.h>
+#include <gst/base/gstbaseaggregator.h>
 
 #include "videoconvert.h"
 
@@ -51,7 +51,7 @@ typedef struct _GstBasemixerCollect GstBasemixerCollect;
  */
 struct _GstBasemixerPad
 {
-  GstPad parent;
+  GstBaseAggregatorPad parent;
 
   /* < private > */
 
@@ -61,8 +61,6 @@ struct _GstBasemixerPad
   /* properties */
   guint zorder;
 
-  GstBasemixerCollect *mixcol;
-
   /* caps used for conversion if needed */
   GstVideoInfo conversion_info;
 
@@ -71,12 +69,19 @@ struct _GstBasemixerPad
   gboolean need_conversion_update;
   GstBuffer *converted_buffer;
 
+  GstBuffer *buffer;
+  GstVideoInfo queued_vinfo;
+  GstBuffer *queued;
+  GstVideoInfo buffer_vinfo;
+
+  GstClockTime start_time;
+  GstClockTime end_time;
   GstVideoFrame *mixed_frame;
 };
 
 struct _GstBasemixerPadClass
 {
-  GstPadClass parent_class;
+  GstBaseAggregatorPadClass parent_class;
 };
 
 GType gst_basemixer_pad_get_type (void);
