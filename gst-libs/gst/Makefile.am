@@ -7,8 +7,8 @@ GL_DIR = gl
 endif
 
 SUBDIRS = interfaces basecamerabinsrc codecparsers \
-	 insertbin uridownloader mpegts $(GL_DIR)
+	 insertbin uridownloader mpegts $(GL_DIR) base
 
 noinst_HEADERS = gst-i18n-plugin.h gettext.h glib-compat-private.h
 DIST_SUBDIRS = interfaces gl basecamerabinsrc codecparsers \
-	insertbin uridownloader mpegts
+	insertbin uridownloader mpegts base
