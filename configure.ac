@@ -418,6 +418,7 @@ AG_GST_CHECK_PLUGIN(aiff)
 AG_GST_CHECK_PLUGIN(asfmux)
 AG_GST_CHECK_PLUGIN(audiofxbad)
 AG_GST_CHECK_PLUGIN(audiomixer)
+AG_GST_CHECK_PLUGIN(compositor)
 AG_GST_CHECK_PLUGIN(audiovisualizers)
 AG_GST_CHECK_PLUGIN(autoconvert)
 AG_GST_CHECK_PLUGIN(bayer)
@@ -3188,6 +3189,7 @@ gst/videosignal/Makefile
 gst/vmnc/Makefile
 gst/y4m/Makefile
 gst/yadif/Makefile
+gst/compositor/Makefile
 gst-libs/Makefile
 gst-libs/gst/Makefile
 gst-libs/gst/basecamerabinsrc/Makefile
@@ -3207,6 +3209,7 @@ gst-libs/gst/codecparsers/Makefile
 gst-libs/gst/mpegts/Makefile
 gst-libs/gst/uridownloader/Makefile
 gst-libs/gst/base/Makefile
+gst-libs/gst/video/Makefile
 sys/Makefile
 sys/dshowdecwrapper/Makefile
 sys/acmenc/Makefile
@@ -3345,6 +3348,8 @@ pkgconfig/gstreamer-mpegts.pc
 pkgconfig/gstreamer-mpegts-uninstalled.pc
 pkgconfig/gstreamer-bad-base.pc
 pkgconfig/gstreamer-bad-base-uninstalled.pc
+pkgconfig/gstreamer-bad-video.pc
+pkgconfig/gstreamer-bad-video-uninstalled.pc
 tools/Makefile
 m4/Makefile
 )
