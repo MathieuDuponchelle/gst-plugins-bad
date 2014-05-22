@@ -125,7 +125,7 @@ check_mimic=
 endif
 
 if HAVE_ORC
-check_orc = orc/bayer orc/audiomixer
+check_orc = orc/bayer orc/audiomixer orc/videomixer
 else
 check_orc =
 endif
@@ -227,6 +227,7 @@ check_PROGRAMS = \
 	elements/dataurisrc \
 	elements/gdppay \
 	elements/gdpdepay \
+ 	elements/videomixer \
 	$(check_jifmux) \
 	elements/jpegparse \
 	elements/h263parse \
@@ -465,6 +466,19 @@ libs_aggregator_CFLAGS = \
 	$(GST_PLUGINS_BAD_CFLAGS) $(GST_PLUGINS_BASE_CFLAGS) \
 	-DGST_USE_UNSTABLE_API \
 	$(GST_BASE_CFLAGS) $(GST_CFLAGS) $(AM_CFLAGS)
+
+elements_videomixer_LDADD = $(LDADD)  $(GST_BASE_LIBS)
+elements_videomixer_CFLAGS = $(GST_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
+
+orc_videomixer_CFLAGS = $(ORC_CFLAGS)
+orc_videomixer_LDADD = $(ORC_LIBS) -lorc-test-0.4
+nodist_orc_videomixer_SOURCES = orc/videomixer.c
+orc_videobox_CFLAGS = $(ORC_CFLAGS)
+
+orc/videomixer.c: $(top_srcdir)/gst/videomixer/videomixerorc.orc
+	$(MKDIR_P) orc/
+	$(ORCC) --test -o $@ $<
+
 
 distclean-local-orc:
 	rm -rf orc
