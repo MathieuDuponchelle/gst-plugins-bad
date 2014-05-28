@@ -63,12 +63,6 @@ struct _GstBasemixer
   /* Lock to prevent two src setcaps from happening at the same time  */
   GMutex setcaps_lock;
 
-  /* sinkpads, a GSList of GstBasemixerPads */
-  GSList *sinkpads;
-  gint numpads;
-  /* Next available sinkpad index */
-  guint next_sinkpad;
-
   /* Output caps */
   GstVideoInfo info;
 

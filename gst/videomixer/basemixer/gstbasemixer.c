@@ -114,7 +114,7 @@ static gboolean gst_basemixer_src_setcaps (GstPad * pad, GstBasemixer * mix,
 static gboolean
 gst_basemixer_update_src_caps (GstBasemixer * mix)
 {
-  GSList *l;
+  GList *l;
   gint best_width = -1, best_height = -1;
   gdouble best_fps = -1, cur_fps;
   gint best_fps_n = -1, best_fps_d = -1;
@@ -125,8 +125,8 @@ gst_basemixer_update_src_caps (GstBasemixer * mix)
 
   GST_BASE_MIXER_SETCAPS_LOCK (mix);
   GST_BASE_MIXER_LOCK (mix);
-
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *mpad = l->data;
     gint this_width, this_height;
     gint fps_n, fps_d;
@@ -159,6 +159,7 @@ gst_basemixer_update_src_caps (GstBasemixer * mix)
       best_fps_d = fps_d;
     }
   }
+  GST_OBJECT_UNLOCK (mix);
 
   if (best_fps_n <= 0 || best_fps_d <= 0 || best_fps == 0.0) {
     best_fps_n = 25;
@@ -212,6 +213,7 @@ gst_basemixer_update_src_caps (GstBasemixer * mix)
         GST_DEBUG_OBJECT (mix, "empty caps");
         ret = FALSE;
         GST_BASE_MIXER_UNLOCK (mix);
+        GST_OBJECT_UNLOCK (mix);
         goto done;
       }
 
@@ -231,6 +233,7 @@ gst_basemixer_update_src_caps (GstBasemixer * mix)
     caps = gst_video_info_to_caps (&info);
 
     GST_BASE_MIXER_UNLOCK (mix);
+    GST_OBJECT_UNLOCK (mix);
     ret = gst_basemixer_src_setcaps (agg->srcpad, mix, caps);
     gst_caps_unref (caps);
   } else {
@@ -246,7 +249,7 @@ done:
 static gboolean
 gst_basemixer_update_converters (GstBasemixer * mix)
 {
-  GSList *tmp;
+  GList *tmp;
   GstVideoFormat best_format;
   GstVideoInfo best_info;
   GstBasemixerPad *pad;
@@ -276,7 +279,8 @@ gst_basemixer_update_converters (GstBasemixer * mix)
     return FALSE;
 
   /* first find new preferred format */
-  for (tmp = mix->sinkpads; tmp; tmp = tmp->next) {
+  GST_OBJECT_LOCK (mix);
+  for (tmp = GST_ELEMENT (mix)->sinkpads; tmp; tmp = tmp->next) {
     GstStructure *s;
     gint format_number;
 
@@ -331,6 +335,7 @@ gst_basemixer_update_converters (GstBasemixer * mix)
       best_format_number = format_number;
     }
   }
+  GST_OBJECT_UNLOCK (mix);
 
   g_hash_table_unref (formats_table);
 
@@ -359,7 +364,8 @@ gst_basemixer_update_converters (GstBasemixer * mix)
       best_format, best_colorimetry, best_chroma);
 
   /* Then browse the sinks once more, setting or unsetting conversion if needed */
-  for (tmp = mix->sinkpads; tmp; tmp = tmp->next) {
+  GST_OBJECT_LOCK (mix);
+  for (tmp = GST_ELEMENT (mix)->sinkpads; tmp; tmp = tmp->next) {
     gchar *colorimetry;
     const gchar *chroma;
 
@@ -391,6 +397,7 @@ gst_basemixer_update_converters (GstBasemixer * mix)
         g_free (colorimetry);
         g_free (best_colorimetry);
         GST_WARNING ("No path found for conversion");
+        GST_OBJECT_UNLOCK (mix);
         return FALSE;
       }
     } else {
@@ -398,6 +405,7 @@ gst_basemixer_update_converters (GstBasemixer * mix)
     }
     g_free (colorimetry);
   }
+  GST_OBJECT_UNLOCK (mix);
 
   g_free (best_colorimetry);
   return TRUE;
@@ -624,12 +632,11 @@ gst_basemixer_pad_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_PAD_ZORDER:
-      GST_BASE_MIXER_LOCK (mix);
+      GST_OBJECT_LOCK (mix);
       pad->zorder = g_value_get_uint (value);
-
-      mix->sinkpads = g_slist_sort (mix->sinkpads,
+      GST_ELEMENT (mix)->sinkpads = g_list_sort (GST_ELEMENT (mix)->sinkpads,
           (GCompareFunc) pad_zorder_compare);
-      GST_BASE_MIXER_UNLOCK (mix);
+      GST_OBJECT_UNLOCK (mix);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -654,6 +661,18 @@ _flush_pad (GstAggregatorPad * aggpad, GstAggregator * aggregator)
 }
 
 static void
+gst_basemixer_pad_finalize (GObject * o)
+{
+  GstBasemixerPad *mixpad = GST_BASE_MIXER_PAD (o);
+
+  if (mixpad->convert)
+    videoconvert_convert_free (mixpad->convert);
+  mixpad->convert = NULL;
+
+  G_OBJECT_CLASS (gst_basemixer_pad_parent_class)->dispose (o);
+}
+
+static void
 gst_basemixer_pad_class_init (GstBasemixerPadClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
@@ -661,6 +680,7 @@ gst_basemixer_pad_class_init (GstBasemixerPadClass * klass)
 
   gobject_class->set_property = gst_basemixer_pad_set_property;
   gobject_class->get_property = gst_basemixer_pad_get_property;
+  gobject_class->finalize = gst_basemixer_pad_finalize;
 
   g_object_class_install_property (gobject_class, PROP_PAD_ZORDER,
       g_param_spec_uint ("zorder", "Z-Order", "Z Order of the picture",
@@ -727,7 +747,7 @@ static void
 gst_basemixer_reset (GstBasemixer * mix)
 {
   GstAggregator *agg = GST_AGGREGATOR (mix);
-  GSList *l;
+  GList *l;
 
   gst_video_info_init (&mix->info);
   mix->ts_offset = 0;
@@ -738,7 +758,8 @@ gst_basemixer_reset (GstBasemixer * mix)
 
   gst_basemixer_reset_qos (mix);
 
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *p = l->data;
 
     gst_buffer_replace (&p->buffer, NULL);
@@ -747,6 +768,7 @@ gst_basemixer_reset (GstBasemixer * mix)
 
     gst_video_info_init (&p->info);
   }
+  GST_OBJECT_UNLOCK (mix);
 }
 
 /*  1 == OK
@@ -759,11 +781,12 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
     GstClockTime output_start_time, GstClockTime output_end_time)
 {
   GstAggregator *agg = GST_AGGREGATOR (mix);
-  GSList *l;
+  GList *l;
   gboolean eos = TRUE;
   gboolean need_more_data = FALSE;
 
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *pad = l->data;
     GstSegment *segment;
     GstAggregatorPad *bpad;
@@ -782,6 +805,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
       if (start_time == -1) {
         gst_buffer_unref (buf);
         GST_DEBUG_OBJECT (pad, "Need timestamped buffers!");
+        GST_OBJECT_UNLOCK (mix);
         return -2;
       }
 
@@ -914,6 +938,7 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
       }
     }
   }
+  GST_OBJECT_UNLOCK (mix);
 
   if (need_more_data)
     return 0;
@@ -923,12 +948,89 @@ gst_basemixer_fill_queues (GstBasemixer * mix,
   return 1;
 }
 
+static gboolean
+convert_frames (GstBasemixerPad * mix, GstBasemixerPad * pad)
+{
+  GstAggregatorPad *bpad = GST_AGGREGATOR_PAD (pad);
+
+  static GstAllocationParams params = { 0, 15, 0, 0, };
+
+  if (pad->buffer != NULL) {
+    guint outsize;
+    GstClockTime timestamp;
+    gint64 stream_time;
+    GstSegment *seg;
+    GstVideoFrame *converted_frame = g_slice_new0 (GstVideoFrame);
+    GstBuffer *converted_buf = NULL;
+    GstVideoFrame *frame = g_slice_new0 (GstVideoFrame);
+
+    seg = &bpad->segment;
+
+    timestamp = GST_BUFFER_TIMESTAMP (pad->buffer);
+
+    stream_time = gst_segment_to_stream_time (seg, GST_FORMAT_TIME, timestamp);
+
+    /* sync object properties on stream time */
+    if (GST_CLOCK_TIME_IS_VALID (stream_time))
+      gst_object_sync_values (GST_OBJECT (pad), stream_time);
+
+
+    gst_video_frame_map (frame, &pad->buffer_vinfo, pad->buffer, GST_MAP_READ);
+
+    if (pad->convert) {
+      gint converted_size;
+
+      /* We wait until here to set the conversion infos, in case mix->info changed */
+      if (pad->need_conversion_update) {
+        pad->conversion_info = mix->info;
+        gst_video_info_set_format (&(pad->conversion_info),
+            GST_VIDEO_INFO_FORMAT (&mix->info), pad->info.width,
+            pad->info.height);
+        pad->need_conversion_update = FALSE;
+      }
+
+      converted_size = pad->conversion_info.size;
+      outsize = GST_VIDEO_INFO_SIZE (&mix->info);
+      converted_size = converted_size > outsize ? converted_size : outsize;
+      converted_buf = gst_buffer_new_allocate (NULL, converted_size, &params);
+
+      gst_video_frame_map (converted_frame, &(pad->conversion_info),
+          converted_buf, GST_MAP_READWRITE);
+      videoconvert_convert_convert (pad->convert, converted_frame, frame);
+      pad->converted_buffer = converted_buf;
+      gst_video_frame_unmap (frame);
+    } else {
+      converted_frame = frame;
+    }
+
+    pad->mixed_frame = converted_frame;
+  }
+
+  return TRUE;
+}
+
+static gboolean
+clean_pad (GstBasemixer * mix, GstBasemixerPad * pad)
+{
+  if (pad->mixed_frame) {
+    gst_video_frame_unmap (pad->mixed_frame);
+    g_slice_free (GstVideoFrame, pad->mixed_frame);
+    pad->mixed_frame = NULL;
+  }
+
+  if (pad->converted_buffer) {
+    gst_buffer_unref (pad->converted_buffer);
+    pad->converted_buffer = NULL;
+  }
+
+  return TRUE;
+}
+
 static GstFlowReturn
 gst_basemixer_blend_buffers (GstBasemixer * mix,
     GstClockTime output_start_time, GstClockTime output_end_time,
     GstBuffer ** outbuf)
 {
-  GSList *l;
   guint outsize;
   GstVideoFrame outframe;
   static GstAllocationParams params = { 0, 15, 0, 0, };
@@ -946,78 +1048,13 @@ gst_basemixer_blend_buffers (GstBasemixer * mix,
   gst_video_frame_map (&outframe, &mix->info, *outbuf, GST_MAP_READWRITE);
 
   /* Here we convert all the frames the subclass will have to mix */
-  for (l = mix->sinkpads; l; l = l->next) {
-    GstBasemixerPad *pad = l->data;
-    GstAggregatorPad *bpad = GST_AGGREGATOR_PAD (pad);
-
-    if (pad->buffer != NULL) {
-      GstClockTime timestamp;
-      gint64 stream_time;
-      GstSegment *seg;
-      GstVideoFrame *converted_frame = g_slice_new0 (GstVideoFrame);
-      GstBuffer *converted_buf = NULL;
-      GstVideoFrame *frame = g_slice_new0 (GstVideoFrame);
-
-      seg = &bpad->segment;
-
-      timestamp = GST_BUFFER_TIMESTAMP (pad->buffer);
-
-      stream_time =
-          gst_segment_to_stream_time (seg, GST_FORMAT_TIME, timestamp);
-
-      /* sync object properties on stream time */
-      if (GST_CLOCK_TIME_IS_VALID (stream_time))
-        gst_object_sync_values (GST_OBJECT (pad), stream_time);
-
-
-      gst_video_frame_map (frame, &pad->buffer_vinfo, pad->buffer,
-          GST_MAP_READ);
-
-      if (pad->convert) {
-        gint converted_size;
-
-        /* We wait until here to set the conversion infos, in case mix->info changed */
-        if (pad->need_conversion_update) {
-          pad->conversion_info = mix->info;
-          gst_video_info_set_format (&(pad->conversion_info),
-              GST_VIDEO_INFO_FORMAT (&mix->info), pad->info.width,
-              pad->info.height);
-          pad->need_conversion_update = FALSE;
-        }
-
-        converted_size = pad->conversion_info.size;
-        converted_size = converted_size > outsize ? converted_size : outsize;
-        converted_buf = gst_buffer_new_allocate (NULL, converted_size, &params);
-
-        gst_video_frame_map (converted_frame, &(pad->conversion_info),
-            converted_buf, GST_MAP_READWRITE);
-        videoconvert_convert_convert (pad->convert, converted_frame, frame);
-        pad->converted_buffer = converted_buf;
-        gst_video_frame_unmap (frame);
-      } else {
-        converted_frame = frame;
-      }
-
-      pad->mixed_frame = converted_frame;
-    }
-  }
+  gst_aggregator_iterate_sinkpads (GST_AGGREGATOR (mix),
+      (GstAggregatorPadForeachFunc) convert_frames, NULL);
 
   mixer_klass->mix_frames (mix, &outframe);
 
-  for (l = mix->sinkpads; l; l = l->next) {
-    GstBasemixerPad *pad = l->data;
-
-    if (pad->mixed_frame) {
-      gst_video_frame_unmap (pad->mixed_frame);
-      g_slice_free (GstVideoFrame, pad->mixed_frame);
-      pad->mixed_frame = NULL;
-    }
-
-    if (pad->converted_buffer) {
-      gst_buffer_unref (pad->converted_buffer);
-      pad->converted_buffer = NULL;
-    }
-  }
+  gst_aggregator_iterate_sinkpads (GST_AGGREGATOR (mix),
+      (GstAggregatorPadForeachFunc) clean_pad, NULL);
   gst_video_frame_unmap (&outframe);
 
   return GST_FLOW_OK;
@@ -1497,7 +1534,7 @@ gst_basemixer_sink_clip (GstAggregator * agg,
 static GstFlowReturn
 gst_basemixer_flush (GstAggregator * agg)
 {
-  GSList *l;
+  GList *l;
   gdouble abs_rate;
   GstBasemixer *mix = GST_BASE_MIXER (agg);
 
@@ -1505,8 +1542,8 @@ gst_basemixer_flush (GstAggregator * agg)
 
   GST_ERROR ("=== HERE");
   abs_rate = ABS (agg->segment.rate);
-  GST_BASE_MIXER_LOCK (mix);
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *p = l->data;
 
     /* Convert to the output segment rate */
@@ -1521,7 +1558,7 @@ gst_basemixer_flush (GstAggregator * agg)
       }
     }
   }
-  GST_BASE_MIXER_UNLOCK (mix);
+  GST_OBJECT_UNLOCK (mix);
 
   agg->segment.position = -1;
   mix->ts_offset = 0;
@@ -1621,17 +1658,14 @@ gst_basemixer_request_new_pad (GstElement * element,
 
   if (mixpad == NULL)
     return NULL;
-  mixpad->zorder = mix->numpads;
 
+  GST_OBJECT_LOCK (mix);
+  mixpad->zorder = GST_ELEMENT (mix)->numsinkpads;
   mixpad->start_time = -1;
   mixpad->end_time = -1;
-
-  /* Keep an internal list of mixpads for zordering */
-  GST_BASE_MIXER_LOCK (mix);
-  mix->sinkpads = g_slist_insert_sorted (mix->sinkpads, mixpad,
+  element->sinkpads = g_list_sort (element->sinkpads,
       (GCompareFunc) pad_zorder_compare);
-  mix->numpads++;
-  GST_BASE_MIXER_UNLOCK (mix);
+  GST_OBJECT_UNLOCK (mix);
 
   gst_child_proxy_child_added (GST_CHILD_PROXY (mix), G_OBJECT (mixpad),
       GST_OBJECT_NAME (mixpad));
@@ -1647,41 +1681,22 @@ gst_basemixer_release_pad (GstElement * element, GstPad * pad)
   gboolean update_caps;
 
   mix = GST_BASE_MIXER (element);
-
-  GST_BASE_MIXER_LOCK (mix);
-  if (G_UNLIKELY (g_slist_find (mix->sinkpads, pad) == NULL)) {
-    g_warning ("Unknown pad %s", GST_PAD_NAME (pad));
-    goto error;
-  }
-
   mixpad = GST_BASE_MIXER_PAD (pad);
 
-  if (mixpad->convert)
-    videoconvert_convert_free (mixpad->convert);
-
-  mix->sinkpads = g_slist_remove (mix->sinkpads, pad);
-  gst_child_proxy_child_removed (GST_CHILD_PROXY (mix), G_OBJECT (mixpad),
-      GST_OBJECT_NAME (mixpad));
-  mix->numpads--;
-
-  // FIXME after talking with thib
-  //GST_COLLECT_PADS_STREAM_LOCK (mix->collect);
+  GST_BASE_MIXER_LOCK (mix);
   gst_basemixer_update_converters (mix);
-  //GST_COLLECT_PADS_STREAM_UNLOCK (mix->collect);
-
   gst_buffer_replace (&mixpad->buffer, NULL);
-
   update_caps = GST_VIDEO_INFO_FORMAT (&mix->info) != GST_VIDEO_FORMAT_UNKNOWN;
   GST_BASE_MIXER_UNLOCK (mix);
 
   GST_ELEMENT_CLASS (parent_class)->release_pad (GST_ELEMENT (mix), pad);
+  gst_child_proxy_child_removed (GST_CHILD_PROXY (mix), G_OBJECT (mixpad),
+      GST_OBJECT_NAME (mixpad));
 
   if (update_caps)
     gst_basemixer_update_src_caps (mix);
 
   return;
-error:
-  GST_BASE_MIXER_UNLOCK (mix);
 }
 
 /* GObject vmethods */
@@ -1700,14 +1715,6 @@ static void
 gst_basemixer_dispose (GObject * o)
 {
   GstBasemixer *mix = GST_BASE_MIXER (o);
-  GSList *tmp;
-
-  for (tmp = mix->sinkpads; tmp; tmp = tmp->next) {
-    GstBasemixerPad *mixpad = tmp->data;
-
-    if (mixpad->convert)
-      videoconvert_convert_free (mixpad->convert);
-  }
 
   gst_caps_replace (&mix->current_caps, NULL);
 }
@@ -1739,13 +1746,14 @@ static GObject *
 gst_basemixer_child_proxy_get_child_by_index (GstChildProxy * child_proxy,
     guint index)
 {
-  GstBasemixer *mix = GST_BASE_MIXER (child_proxy);
   GObject *obj;
+  GstBasemixer *mix = GST_BASE_MIXER (child_proxy);
 
-  GST_BASE_MIXER_LOCK (mix);
-  if ((obj = g_slist_nth_data (mix->sinkpads, index)))
+  GST_OBJECT_LOCK (mix);
+  if ((obj = g_list_nth_data (GST_ELEMENT (mix)->sinkpads, index)))
     g_object_ref (obj);
-  GST_BASE_MIXER_UNLOCK (mix);
+  GST_OBJECT_UNLOCK (mix);
+
   return obj;
 }
 
@@ -1753,12 +1761,13 @@ static guint
 gst_basemixer_child_proxy_get_children_count (GstChildProxy * child_proxy)
 {
   guint count = 0;
-  GstBasemixer *mix = GST_BASE_MIXER (child_proxy);
 
-  GST_BASE_MIXER_LOCK (mix);
-  count = mix->numpads;
-  GST_BASE_MIXER_UNLOCK (mix);
-  GST_INFO_OBJECT (mix, "Children Count: %d", count);
+  GST_OBJECT_LOCK (child_proxy);
+  count = GST_ELEMENT (child_proxy)->numsinkpads;
+  GST_OBJECT_UNLOCK (child_proxy);
+
+  GST_INFO_OBJECT (child_proxy, "Children Count: %d", count);
+
   return count;
 }
 

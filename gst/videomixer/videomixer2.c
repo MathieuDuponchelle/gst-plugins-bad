@@ -425,11 +425,12 @@ set_functions (GstVideoMixer2 * mix, GstVideoInfo * info)
 static gboolean
 gst_videomixer2_modify_src_pad_info (GstBasemixer * mix, GstVideoInfo * info)
 {
-  GSList *l;
+  GList *l;
   gint best_width = -1, best_height = -1;
   gboolean ret = FALSE;
 
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *base_mixer_pad = l->data;
     GstVideomixer2Pad *video_mixer_pad = GST_VIDEO_MIXER2_PAD (base_mixer_pad);
     gint this_width, this_height;
@@ -449,6 +450,7 @@ gst_videomixer2_modify_src_pad_info (GstBasemixer * mix, GstVideoInfo * info)
     if (best_height < this_height)
       best_height = this_height;
   }
+  GST_OBJECT_UNLOCK (mix);
 
   if (best_width > 0 && best_height > 0) {
     gst_video_info_set_format (info, GST_VIDEO_INFO_FORMAT (info),
@@ -462,7 +464,7 @@ gst_videomixer2_modify_src_pad_info (GstBasemixer * mix, GstVideoInfo * info)
 static GstFlowReturn
 gst_videomixer2_mix_frames (GstBasemixer * mix, GstVideoFrame * outframe)
 {
-  GSList *l;
+  GList *l;
   GstVideoMixer2 *video_mixer = GST_VIDEO_MIXER2 (mix);
   BlendFunction composite;
 
@@ -504,7 +506,8 @@ gst_videomixer2_mix_frames (GstBasemixer * mix, GstVideoFrame * outframe)
     }
   }
 
-  for (l = mix->sinkpads; l; l = l->next) {
+  GST_OBJECT_LOCK (mix);
+  for (l = GST_ELEMENT (mix)->sinkpads; l; l = l->next) {
     GstBasemixerPad *pad = l->data;
     GstVideomixer2Pad *mixer_pad = GST_VIDEO_MIXER2_PAD (pad);
 
@@ -513,6 +516,7 @@ gst_videomixer2_mix_frames (GstBasemixer * mix, GstVideoFrame * outframe)
           mixer_pad->alpha, outframe);
     }
   }
+  GST_OBJECT_UNLOCK (mix);
 
   return GST_FLOW_OK;
 }
