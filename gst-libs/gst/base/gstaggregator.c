@@ -28,6 +28,9 @@
 
 #include "gstaggregator.h"
 
+/*  Might become API */
+static void gst_aggregator_merge_tags (GstAggregator * aggregator,
+    const GstTagList * tags, GstTagMergeMode mode);
 
 GST_DEBUG_CATEGORY_STATIC (aggregator_debug);
 #define GST_CAT_DEFAULT aggregator_debug
@@ -129,6 +132,9 @@ struct _GstAggregatorPrivate
   GstFlowReturn flow_return;
 
   GstCaps *srccaps;
+
+  GstTagList *tags;
+  gboolean tags_changed;
 };
 
 typedef struct
@@ -236,9 +242,11 @@ _reset_flow_values (GstAggregator * self)
   gst_segment_init (&self->segment, GST_FORMAT_TIME);
 }
 
-static void
+static inline void
 _push_mandatory_events (GstAggregator * self)
 {
+  GstAggregatorPrivate *priv = self->priv;
+
   if (g_atomic_int_get (&self->priv->send_stream_start)) {
     gchar s_id[32];
 
@@ -265,6 +273,12 @@ _push_mandatory_events (GstAggregator * self)
       gst_pad_push_event (self->srcpad, gst_event_new_segment (&self->segment));
       g_atomic_int_set (&self->priv->send_segment, FALSE);
     }
+  }
+
+  if (priv->tags && priv->tags_changed) {
+    gst_pad_push_event (self->srcpad,
+        gst_event_new_tag (gst_tag_list_ref (priv->tags)));
+    priv->tags_changed = FALSE;
   }
 }
 
@@ -417,6 +431,7 @@ _flush (GstAggregator * self)
   GST_DEBUG_OBJECT (self, "Flushing everything");
   g_atomic_int_set (&priv->send_segment, TRUE);
   g_atomic_int_set (&priv->flush_seeking, FALSE);
+  g_atomic_int_set (&priv->tags_changed, FALSE);
   if (klass->flush)
     ret = klass->flush (self);
 
@@ -547,6 +562,20 @@ _pad_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
       goto eat;
     default:
     {
+      break;
+    }
+    case GST_EVENT_TAG:
+    {
+      GstTagList *tags;
+
+      gst_event_parse_tag (event, &tags);
+
+      if (gst_tag_list_get_scope (tags) == GST_TAG_SCOPE_STREAM) {
+        gst_aggregator_merge_tags (self, tags, GST_TAG_MERGE_REPLACE);
+        gst_event_unref (event);
+        event = NULL;
+        goto eat;
+      }
       break;
     }
   }
@@ -973,6 +1002,7 @@ gst_aggregator_init (GstAggregator * self, GstAggregatorClass * klass)
   g_return_if_fail (pad_template != NULL);
 
   priv->padcount = -1;
+  priv->tags_changed = FALSE;
   _reset_flow_values (self);
 
   priv->mcontext = g_main_context_new ();
@@ -1195,4 +1225,39 @@ gst_aggregator_pad_get_buffer (GstAggregatorPad * pad)
   PAD_UNLOCK_EVENT (pad);
 
   return buffer;
+}
+
+/**
+ * gst_aggregator_merge_tags:
+ * @self: a #GstAggregator
+ * @tags: a #GstTagList to merge
+ * @mode: the #GstTagMergeMode to use
+ *
+ * Adds tags to so-called pending tags, which will be processed
+ * before pushing out data downstream.
+ *
+ * Note that this is provided for convenience, and the subclass is
+ * not required to use this and can still do tag handling on its own.
+ *
+ * MT safe.
+ */
+void
+gst_aggregator_merge_tags (GstAggregator * self,
+    const GstTagList * tags, GstTagMergeMode mode)
+{
+  GstTagList *otags;
+
+  g_return_if_fail (GST_IS_AGGREGATOR (self));
+  g_return_if_fail (tags == NULL || GST_IS_TAG_LIST (tags));
+
+  /* FIXME Check if we can use OBJECT lock here! */
+  GST_OBJECT_LOCK (self);
+  if (tags)
+    GST_DEBUG_OBJECT (self, "merging tags %" GST_PTR_FORMAT, tags);
+  otags = self->priv->tags;
+  self->priv->tags = gst_tag_list_merge (self->priv->tags, tags, mode);
+  if (otags)
+    gst_tag_list_unref (otags);
+  self->priv->tags_changed = TRUE;
+  GST_OBJECT_UNLOCK (self);
 }
