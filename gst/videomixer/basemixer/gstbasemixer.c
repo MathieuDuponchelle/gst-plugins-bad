@@ -103,7 +103,6 @@ enum
 };
 
 G_DEFINE_TYPE (GstBasemixerPad, gst_basemixer_pad, GST_TYPE_AGGREGATOR_PAD);
-#define gst_basemixer_parent_class parent_class
 G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GstBasemixer, gst_basemixer,
     GST_TYPE_AGGREGATOR, G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY,
         gst_basemixer_child_proxy_init));
@@ -595,7 +594,9 @@ gst_basemixer_sink_query (GstAggregator * agg, GstAggregatorPad * bpad,
       break;
     }
     default:
-      ret = GST_AGGREGATOR_CLASS (parent_class)->pad_query (agg, bpad, query);
+      ret =
+          GST_AGGREGATOR_CLASS (gst_basemixer_parent_class)->pad_query (agg,
+          bpad, query);
       break;
   }
   return ret;
@@ -1403,7 +1404,9 @@ gst_basemixer_src_query (GstAggregator * agg, GstQuery * query)
       res = gst_basemixer_query_latency (mix, query);
       break;
     case GST_QUERY_CAPS:
-      res = GST_AGGREGATOR_CLASS (parent_class)->src_query (agg, query);
+      res =
+          GST_AGGREGATOR_CLASS (gst_basemixer_parent_class)->src_query (agg,
+          query);
       break;
     default:
       /* FIXME, needs a custom query handler because we have multiple
@@ -1439,7 +1442,8 @@ gst_basemixer_src_event (GstAggregator * agg, GstEvent * event)
       break;
   }
 
-  return GST_AGGREGATOR_CLASS (parent_class)->src_event (agg, event);
+  return GST_AGGREGATOR_CLASS (gst_basemixer_parent_class)->src_event (agg,
+      event);
 }
 
 static gboolean
@@ -1604,7 +1608,8 @@ gst_basemixer_sink_event (GstAggregator * agg, GstAggregatorPad * bpad,
   }
 
   if (event != NULL)
-    return GST_AGGREGATOR_CLASS (parent_class)->pad_event (agg, bpad, event);
+    return GST_AGGREGATOR_CLASS (gst_basemixer_parent_class)->pad_event (agg,
+        bpad, event);
 
   return ret;
 }
@@ -1630,7 +1635,9 @@ gst_basemixer_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
-  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+  ret =
+      GST_ELEMENT_CLASS (gst_basemixer_parent_class)->change_state (element,
+      transition);
 
   switch (transition) {
     case GST_STATE_CHANGE_PAUSED_TO_READY:
@@ -1653,8 +1660,8 @@ gst_basemixer_request_new_pad (GstElement * element,
   mix = GST_BASE_MIXER (element);
 
   mixpad = (GstBasemixerPad *)
-      GST_ELEMENT_CLASS (parent_class)->request_new_pad (element, templ,
-      req_name, caps);
+      GST_ELEMENT_CLASS (gst_basemixer_parent_class)->request_new_pad (element,
+      templ, req_name, caps);
 
   if (mixpad == NULL)
     return NULL;
@@ -1689,7 +1696,9 @@ gst_basemixer_release_pad (GstElement * element, GstPad * pad)
   update_caps = GST_VIDEO_INFO_FORMAT (&mix->info) != GST_VIDEO_FORMAT_UNKNOWN;
   GST_BASE_MIXER_UNLOCK (mix);
 
-  GST_ELEMENT_CLASS (parent_class)->release_pad (GST_ELEMENT (mix), pad);
+  GST_ELEMENT_CLASS (gst_basemixer_parent_class)->release_pad (GST_ELEMENT
+      (mix), pad);
+
   gst_child_proxy_child_removed (GST_CHILD_PROXY (mix), G_OBJECT (mixpad),
       GST_OBJECT_NAME (mixpad));
 
@@ -1708,7 +1717,7 @@ gst_basemixer_finalize (GObject * o)
   g_mutex_clear (&mix->lock);
   g_mutex_clear (&mix->setcaps_lock);
 
-  G_OBJECT_CLASS (parent_class)->finalize (o);
+  G_OBJECT_CLASS (gst_basemixer_parent_class)->finalize (o);
 }
 
 static void
