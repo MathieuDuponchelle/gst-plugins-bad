@@ -394,10 +394,9 @@ _stop_srcpad_task (GstAggregator * self, GstEvent * flush_start)
   _remove_all_sources (self);
   if (flush_start) {
     res = gst_pad_push_event (self->srcpad, flush_start);
-    gst_pad_pause_task (self->srcpad);
-  } else {
-    gst_pad_stop_task (self->srcpad);
   }
+
+  gst_pad_stop_task (self->srcpad);
 
   return res;
 }
