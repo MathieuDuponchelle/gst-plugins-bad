@@ -1100,11 +1100,6 @@ gst_basemixer_aggregate (GstAggregator * agg)
       GST_SECOND * GST_VIDEO_INFO_FPS_D (&mix->info),
       GST_VIDEO_INFO_FPS_N (&mix->info)) + agg->segment.start;
 
-  if (G_UNLIKELY (mix->pending_tags)) {
-    gst_pad_push_event (agg->srcpad, gst_event_new_tag (mix->pending_tags));
-    mix->pending_tags = NULL;
-  }
-
   if (agg->segment.stop != -1)
     output_end_time = MIN (output_end_time, agg->segment.stop);
 
@@ -1508,11 +1503,6 @@ gst_basemixer_flush (GstAggregator * agg)
 
   GST_ERROR ("=== FLUSHING");
 
-  if (mix->pending_tags) {
-    gst_tag_list_unref (mix->pending_tags);
-    mix->pending_tags = NULL;
-  }
-
   GST_ERROR ("=== HERE");
   abs_rate = ABS (agg->segment.rate);
   GST_BASE_MIXER_LOCK (mix);
@@ -1570,19 +1560,6 @@ gst_basemixer_sink_event (GstAggregator * agg, GstAggregatorPad * bpad,
       gst_event_copy_segment (event, &seg);
 
       g_assert (seg.format == GST_FORMAT_TIME);
-      break;
-    }
-    case GST_EVENT_TAG:
-    {
-      /* collect tags here so we can push them out when we collect data */
-      GstTagList *tags;
-
-      gst_event_parse_tag (event, &tags);
-      tags = gst_tag_list_merge (mix->pending_tags, tags, GST_TAG_MERGE_APPEND);
-      if (mix->pending_tags)
-        gst_tag_list_unref (mix->pending_tags);
-      mix->pending_tags = gst_tag_list_ref (tags);
-      event = NULL;
       break;
     }
     default:
@@ -1732,11 +1709,6 @@ gst_basemixer_dispose (GObject * o)
       videoconvert_convert_free (mixpad->convert);
   }
 
-  if (mix->pending_tags) {
-    gst_tag_list_unref (mix->pending_tags);
-    mix->pending_tags = NULL;
-  }
-
   gst_caps_replace (&mix->current_caps, NULL);
 }
 
@@ -1849,7 +1821,6 @@ static void
 gst_basemixer_init (GstBasemixer * mix)
 {
   mix->current_caps = NULL;
-  mix->pending_tags = NULL;
 
   g_mutex_init (&mix->lock);
   g_mutex_init (&mix->setcaps_lock);

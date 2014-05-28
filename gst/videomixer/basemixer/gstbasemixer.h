@@ -87,7 +87,6 @@ struct _GstBasemixer
   guint64 qos_processed, qos_dropped;
 
   gboolean send_stream_start;
-  GstTagList *pending_tags;
 };
 
 struct _GstBasemixerClass
