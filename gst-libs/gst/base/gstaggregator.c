@@ -129,6 +129,7 @@ struct _GstAggregatorPrivate
   gboolean send_segment;
   gboolean flush_seeking;
   gboolean pending_flush_start;
+  gboolean send_eos;
   GstFlowReturn flow_return;
 
   GstCaps *srccaps;
@@ -298,8 +299,22 @@ _push_eos (GstAggregator * self)
 {
   _push_mandatory_events (self);
 
-  GST_ERROR ("pushing eos");
+  self->priv->send_eos = FALSE;
   gst_pad_push_event (self->srcpad, gst_event_new_eos ());
+}
+
+static void
+_remove_all_sources (GstAggregator * self)
+{
+  GSource *source;
+
+  MAIN_CONTEXT_LOCK (self);
+  while ((source =
+          g_main_context_find_source_by_user_data (self->priv->mcontext,
+              self))) {
+    g_source_destroy (source);
+  }
+  MAIN_CONTEXT_UNLOCK (self);
 }
 
 static gboolean
@@ -309,7 +324,7 @@ aggregate_func (GstAggregator * self)
   GstAggregatorClass *klass = GST_AGGREGATOR_GET_CLASS (self);
 
   GST_LOG_OBJECT (self, "Checking aggregate");
-  while (gst_aggregator_iterate_sinkpads (self,
+  while (priv->send_eos && gst_aggregator_iterate_sinkpads (self,
           (GstAggregatorPadForeachFunc) _check_all_pads_with_data_or_eos,
           NULL)) {
     GST_ERROR_OBJECT (self, "Actually aggregating!");
@@ -317,6 +332,8 @@ aggregate_func (GstAggregator * self)
     priv->flow_return = klass->aggregate (self);
 
     if (priv->flow_return == GST_FLOW_EOS) {
+      g_main_context_wakeup (self->priv->mcontext);
+      _remove_all_sources (self);
       _push_eos (self);
     }
 
@@ -332,21 +349,6 @@ aggregate_func (GstAggregator * self)
   }
 
   return G_SOURCE_REMOVE;
-}
-
-
-static void
-_remove_all_sources (GstAggregator * self)
-{
-  GSource *source;
-
-  MAIN_CONTEXT_LOCK (self);
-  while ((source =
-          g_main_context_find_source_by_user_data (self->priv->mcontext,
-              self))) {
-    g_source_destroy (source);
-  }
-  MAIN_CONTEXT_UNLOCK (self);
 }
 
 static void
@@ -367,6 +369,7 @@ _start (GstAggregator * self)
   self->priv->running = TRUE;
   self->priv->send_stream_start = TRUE;
   self->priv->send_segment = TRUE;
+  self->priv->send_eos = TRUE;
   self->priv->srccaps = NULL;
 }
 
@@ -514,6 +517,7 @@ _pad_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
              * all sinkpads -- Seeking is Done... sending FLUSH_STOP */
             _flush (self);
             gst_pad_push_event (self->srcpad, event);
+            priv->send_eos = TRUE;
             event = NULL;
             _add_aggregate_gsource (self);
 
