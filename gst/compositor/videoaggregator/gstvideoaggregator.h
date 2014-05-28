@@ -1,4 +1,4 @@
-/* Generic video mixer plugin
+/* Generic video aggregator plugin
  * Copyright (C) 2008 Wim Taymans <wim@fluendo.com>
  * Copyright (C) 2010 Sebastian Dröge <sebastian.droege@collabora.co.uk>
  *
@@ -18,37 +18,36 @@
  * Boston, MA 02110-1301, USA.
  */
  
-#ifndef __GST_BASE_MIXER_H__
-#define __GST_BASE_MIXER_H__
+#ifndef __GST_VIDEO_AGGREGATOR_H__
+#define __GST_VIDEO_AGGREGATOR_H__
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
-
-#include "gstbasemixerpad.h"
-
 #include <gst/base/gstaggregator.h>
+
+#include "gstvideoaggregatorpad.h"
 
 G_BEGIN_DECLS
 
-#define GST_TYPE_BASE_MIXER (gst_basemixer_get_type())
-#define GST_BASE_MIXER(obj) \
-        (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_BASE_MIXER, GstBasemixer))
-#define GST_BASE_MIXER_CLASS(klass) \
-        (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_BASE_MIXER, GstBasemixerClass))
-#define GST_IS_BASE_MIXER(obj) \
-        (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_BASE_MIXER))
-#define GST_IS_BASE_MIXER_CLASS(klass) \
-        (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_BASE_MIXER))
+#define GST_TYPE_VIDEO_AGGREGATOR (gst_videoaggregator_get_type())
+#define GST_VIDEO_AGGREGATOR(obj) \
+        (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_VIDEO_AGGREGATOR, GstVideoAggregator))
+#define GST_VIDEO_AGGREGATOR_CLASS(klass) \
+        (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_VIDEO_AGGREGATOR, GstVideoAggregatorClass))
+#define GST_IS_VIDEO_AGGREGATOR(obj) \
+        (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_VIDEO_AGGREGATOR))
+#define GST_IS_VIDEO_AGGREGATOR_CLASS(klass) \
+        (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_VIDEO_AGGREGATOR))
 
-typedef struct _GstBasemixer GstBasemixer;
-typedef struct _GstBasemixerClass GstBasemixerClass;
+typedef struct _GstVideoAggregator GstVideoAggregator;
+typedef struct _GstVideoAggregatorClass GstVideoAggregatorClass;
 
 /**
- * GstBasemixer:
+ * GstVideoAggregator:
  *
- * The opaque #GstBasemixer structure.
+ * The opaque #GstVideoAggregator structure.
  */
-struct _GstBasemixer
+struct _GstVideoAggregator
 {
   GstAggregator aggregator;
 
@@ -57,7 +56,7 @@ struct _GstBasemixer
   /* pad */
   GstPad *srcpad;
 
-  /* Lock to prevent the state to change while mixing */
+  /* Lock to prevent the state to change while aggregating */
   GMutex lock;
 
   /* Lock to prevent two src setcaps from happening at the same time  */
@@ -83,18 +82,18 @@ struct _GstBasemixer
   gboolean send_stream_start;
 };
 
-struct _GstBasemixerClass
+struct _GstVideoAggregatorClass
 {
   GstAggregatorClass parent_class;
 
-  GstBasemixerPad*               (*create_new_pad)      (GstBasemixer *basemixer, GstPadTemplate *templ,
+  GstVideoAggregatorPad*               (*create_new_pad)      (GstVideoAggregator *videoaggregator, GstPadTemplate *templ,
 							 const gchar* name, const GstCaps *caps);
-  gboolean			 (*modify_src_pad_info) (GstBasemixer *basemixer, GstVideoInfo *info);
-  GstFlowReturn                  (*mix_frames)          (GstBasemixer *basemixer, GstVideoFrame *outframe);
-  GstCaps * (*get_preferred_input_caps) (GstBasemixer *basemixer);
+  gboolean			 (*modify_src_pad_info) (GstVideoAggregator *videoaggregator, GstVideoInfo *info);
+  GstFlowReturn                  (*aggregate_frames)          (GstVideoAggregator *videoaggregator, GstVideoFrame *outframe);
+  GstCaps * (*get_preferred_input_caps) (GstVideoAggregator *videoaggregator);
 };
 
-GType gst_basemixer_get_type (void);
+GType gst_videoaggregator_get_type (void);
 
 G_END_DECLS
-#endif /* __GST_BASE_MIXER_H__ */
+#endif /* __GST_VIDEO_AGGREGATOR_H__ */

@@ -27,7 +27,7 @@
 #endif
 
 #include "blend.h"
-#include "videomixerorc.h"
+#include "compositororc.h"
 
 #include <string.h>
 
@@ -35,8 +35,8 @@
 
 #define BLEND(D,S,alpha) (((D) * (256 - (alpha)) + (S) * (alpha)) >> 8)
 
-GST_DEBUG_CATEGORY_STATIC (gst_videomixer_blend_debug);
-#define GST_CAT_DEFAULT gst_videomixer_blend_debug
+GST_DEBUG_CATEGORY_STATIC (gst_compositor_blend_debug);
+#define GST_CAT_DEFAULT gst_compositor_blend_debug
 
 /* Below are the implementations of everything */
 
@@ -97,7 +97,7 @@ _##method##_loop_##name (guint8 * dest, const guint8 * src, gint src_height, \
     gint src_width, gint src_stride, gint dest_stride, guint s_alpha) \
 { \
   s_alpha = MIN (255, s_alpha); \
-  video_mixer_orc_##method##_##name (dest, dest_stride, src, src_stride, \
+  compositor_orc_##method##_##name (dest, dest_stride, src, src_stride, \
       s_alpha, src_width, src_height); \
 }
 
@@ -188,7 +188,7 @@ fill_color_##name (GstVideoFrame * frame, gint Y, gint U, gint V) \
   } \
   val = GUINT32_FROM_BE ((0xff << A) | (c1 << C1) | (c2 << C2) | (c3 << C3)); \
   \
-  video_mixer_orc_splat_u32 ((guint32 *) dest, val, height * width); \
+  compositor_orc_splat_u32 ((guint32 *) dest, val, height * width); \
 }
 
 A32_COLOR (argb, TRUE, 24, 16, 8, 0);
@@ -425,20 +425,20 @@ fill_color_##format_name (GstVideoFrame * frame, \
 #define GST_ROUND_UP_1(x) (x)
 
 PLANAR_YUV_BLEND (i420, GST_VIDEO_FORMAT_I420, GST_ROUND_UP_2,
-    GST_ROUND_UP_2, memcpy, video_mixer_orc_blend_u8);
+    GST_ROUND_UP_2, memcpy, compositor_orc_blend_u8);
 PLANAR_YUV_FILL_CHECKER (i420, GST_VIDEO_FORMAT_I420, memset);
 PLANAR_YUV_FILL_COLOR (i420, GST_VIDEO_FORMAT_I420, memset);
 PLANAR_YUV_FILL_COLOR (yv12, GST_VIDEO_FORMAT_YV12, memset);
 PLANAR_YUV_BLEND (y444, GST_VIDEO_FORMAT_Y444, GST_ROUND_UP_1,
-    GST_ROUND_UP_1, memcpy, video_mixer_orc_blend_u8);
+    GST_ROUND_UP_1, memcpy, compositor_orc_blend_u8);
 PLANAR_YUV_FILL_CHECKER (y444, GST_VIDEO_FORMAT_Y444, memset);
 PLANAR_YUV_FILL_COLOR (y444, GST_VIDEO_FORMAT_Y444, memset);
 PLANAR_YUV_BLEND (y42b, GST_VIDEO_FORMAT_Y42B, GST_ROUND_UP_2,
-    GST_ROUND_UP_1, memcpy, video_mixer_orc_blend_u8);
+    GST_ROUND_UP_1, memcpy, compositor_orc_blend_u8);
 PLANAR_YUV_FILL_CHECKER (y42b, GST_VIDEO_FORMAT_Y42B, memset);
 PLANAR_YUV_FILL_COLOR (y42b, GST_VIDEO_FORMAT_Y42B, memset);
 PLANAR_YUV_BLEND (y41b, GST_VIDEO_FORMAT_Y41B, GST_ROUND_UP_4,
-    GST_ROUND_UP_1, memcpy, video_mixer_orc_blend_u8);
+    GST_ROUND_UP_1, memcpy, compositor_orc_blend_u8);
 PLANAR_YUV_FILL_CHECKER (y41b, GST_VIDEO_FORMAT_Y41B, memset);
 PLANAR_YUV_FILL_COLOR (y41b, GST_VIDEO_FORMAT_Y41B, memset);
 
@@ -636,10 +636,10 @@ fill_color_##format_name (GstVideoFrame * frame, \
   } \
 }
 
-NV_YUV_BLEND (nv12, memcpy, video_mixer_orc_blend_u8);
+NV_YUV_BLEND (nv12, memcpy, compositor_orc_blend_u8);
 NV_YUV_FILL_CHECKER (nv12, memset);
 NV_YUV_FILL_COLOR (nv12, memset);
-NV_YUV_BLEND (nv21, memcpy, video_mixer_orc_blend_u8);
+NV_YUV_BLEND (nv21, memcpy, compositor_orc_blend_u8);
 NV_YUV_FILL_CHECKER (nv21, memset);
 
 /* RGB, BGR, xRGB, xBGR, RGBx, BGRx */
@@ -781,12 +781,12 @@ _memset_##name (guint8* dest, gint red, gint green, gint blue, gint width) { \
   guint32 val; \
   \
   val = GUINT32_FROM_BE ((red << r) | (green << g) | (blue << b)); \
-  video_mixer_orc_splat_u32 ((guint32 *) dest, val, width); \
+  compositor_orc_splat_u32 ((guint32 *) dest, val, width); \
 }
 
-#define _orc_memcpy_u32(dest,src,len) video_mixer_orc_memcpy_u32((guint32 *) dest, (const guint32 *) src, len/4)
+#define _orc_memcpy_u32(dest,src,len) compositor_orc_memcpy_u32((guint32 *) dest, (const guint32 *) src, len/4)
 
-RGB_BLEND (rgb, 3, memcpy, video_mixer_orc_blend_u8);
+RGB_BLEND (rgb, 3, memcpy, compositor_orc_blend_u8);
 RGB_FILL_CHECKER_C (rgb, 3, 0, 1, 2);
 MEMSET_RGB_C (rgb, 0, 1, 2);
 RGB_FILL_COLOR (rgb_c, 3, _memset_rgb_c);
@@ -794,7 +794,7 @@ RGB_FILL_COLOR (rgb_c, 3, _memset_rgb_c);
 MEMSET_RGB_C (bgr, 2, 1, 0);
 RGB_FILL_COLOR (bgr_c, 3, _memset_bgr_c);
 
-RGB_BLEND (xrgb, 4, _orc_memcpy_u32, video_mixer_orc_blend_u8);
+RGB_BLEND (xrgb, 4, _orc_memcpy_u32, compositor_orc_blend_u8);
 RGB_FILL_CHECKER_C (xrgb, 4, 1, 2, 3);
 MEMSET_XRGB (xrgb, 24, 16, 0);
 RGB_FILL_COLOR (xrgb, 4, _memset_xrgb);
@@ -929,12 +929,12 @@ fill_color_##name (GstVideoFrame * frame, \
   val = GUINT32_FROM_BE ((colY << Y1) | (colY << Y2) | (colU << U) | (colV << V)); \
   \
   for (i = 0; i < height; i++) { \
-    video_mixer_orc_splat_u32 ((guint32 *) dest, val, width); \
+    compositor_orc_splat_u32 ((guint32 *) dest, val, width); \
     dest += dest_stride; \
   } \
 }
 
-PACKED_422_BLEND (yuy2, memcpy, video_mixer_orc_blend_u8);
+PACKED_422_BLEND (yuy2, memcpy, compositor_orc_blend_u8);
 PACKED_422_FILL_CHECKER_C (yuy2, 0, 1, 2, 3);
 PACKED_422_FILL_CHECKER_C (uyvy, 1, 0, 3, 2);
 PACKED_422_FILL_COLOR (yuy2, 24, 16, 8, 0);
@@ -942,118 +942,118 @@ PACKED_422_FILL_COLOR (yvyu, 24, 0, 8, 16);
 PACKED_422_FILL_COLOR (uyvy, 16, 24, 0, 8);
 
 /* Init function */
-BlendFunction gst_video_mixer_blend_argb;
-BlendFunction gst_video_mixer_blend_bgra;
-BlendFunction gst_video_mixer_overlay_argb;
-BlendFunction gst_video_mixer_overlay_bgra;
+BlendFunction gst_compositor_blend_argb;
+BlendFunction gst_compositor_blend_bgra;
+BlendFunction gst_compositor_overlay_argb;
+BlendFunction gst_compositor_overlay_bgra;
 /* AYUV/ABGR is equal to ARGB, RGBA is equal to BGRA */
-BlendFunction gst_video_mixer_blend_y444;
-BlendFunction gst_video_mixer_blend_y42b;
-BlendFunction gst_video_mixer_blend_i420;
+BlendFunction gst_compositor_blend_y444;
+BlendFunction gst_compositor_blend_y42b;
+BlendFunction gst_compositor_blend_i420;
 /* I420 is equal to YV12 */
-BlendFunction gst_video_mixer_blend_nv12;
-BlendFunction gst_video_mixer_blend_nv21;
-BlendFunction gst_video_mixer_blend_y41b;
-BlendFunction gst_video_mixer_blend_rgb;
+BlendFunction gst_compositor_blend_nv12;
+BlendFunction gst_compositor_blend_nv21;
+BlendFunction gst_compositor_blend_y41b;
+BlendFunction gst_compositor_blend_rgb;
 /* BGR is equal to RGB */
-BlendFunction gst_video_mixer_blend_rgbx;
+BlendFunction gst_compositor_blend_rgbx;
 /* BGRx, xRGB, xBGR are equal to RGBx */
-BlendFunction gst_video_mixer_blend_yuy2;
+BlendFunction gst_compositor_blend_yuy2;
 /* YVYU and UYVY are equal to YUY2 */
 
-FillCheckerFunction gst_video_mixer_fill_checker_argb;
-FillCheckerFunction gst_video_mixer_fill_checker_bgra;
+FillCheckerFunction gst_compositor_fill_checker_argb;
+FillCheckerFunction gst_compositor_fill_checker_bgra;
 /* ABGR is equal to ARGB, RGBA is equal to BGRA */
-FillCheckerFunction gst_video_mixer_fill_checker_ayuv;
-FillCheckerFunction gst_video_mixer_fill_checker_y444;
-FillCheckerFunction gst_video_mixer_fill_checker_y42b;
-FillCheckerFunction gst_video_mixer_fill_checker_i420;
+FillCheckerFunction gst_compositor_fill_checker_ayuv;
+FillCheckerFunction gst_compositor_fill_checker_y444;
+FillCheckerFunction gst_compositor_fill_checker_y42b;
+FillCheckerFunction gst_compositor_fill_checker_i420;
 /* I420 is equal to YV12 */
-FillCheckerFunction gst_video_mixer_fill_checker_nv12;
-FillCheckerFunction gst_video_mixer_fill_checker_nv21;
-FillCheckerFunction gst_video_mixer_fill_checker_y41b;
-FillCheckerFunction gst_video_mixer_fill_checker_rgb;
+FillCheckerFunction gst_compositor_fill_checker_nv12;
+FillCheckerFunction gst_compositor_fill_checker_nv21;
+FillCheckerFunction gst_compositor_fill_checker_y41b;
+FillCheckerFunction gst_compositor_fill_checker_rgb;
 /* BGR is equal to RGB */
-FillCheckerFunction gst_video_mixer_fill_checker_xrgb;
+FillCheckerFunction gst_compositor_fill_checker_xrgb;
 /* BGRx, xRGB, xBGR are equal to RGBx */
-FillCheckerFunction gst_video_mixer_fill_checker_yuy2;
+FillCheckerFunction gst_compositor_fill_checker_yuy2;
 /* YVYU is equal to YUY2 */
-FillCheckerFunction gst_video_mixer_fill_checker_uyvy;
+FillCheckerFunction gst_compositor_fill_checker_uyvy;
 
-FillColorFunction gst_video_mixer_fill_color_argb;
-FillColorFunction gst_video_mixer_fill_color_bgra;
-FillColorFunction gst_video_mixer_fill_color_abgr;
-FillColorFunction gst_video_mixer_fill_color_rgba;
-FillColorFunction gst_video_mixer_fill_color_ayuv;
-FillColorFunction gst_video_mixer_fill_color_y444;
-FillColorFunction gst_video_mixer_fill_color_y42b;
-FillColorFunction gst_video_mixer_fill_color_i420;
-FillColorFunction gst_video_mixer_fill_color_yv12;
-FillColorFunction gst_video_mixer_fill_color_nv12;
+FillColorFunction gst_compositor_fill_color_argb;
+FillColorFunction gst_compositor_fill_color_bgra;
+FillColorFunction gst_compositor_fill_color_abgr;
+FillColorFunction gst_compositor_fill_color_rgba;
+FillColorFunction gst_compositor_fill_color_ayuv;
+FillColorFunction gst_compositor_fill_color_y444;
+FillColorFunction gst_compositor_fill_color_y42b;
+FillColorFunction gst_compositor_fill_color_i420;
+FillColorFunction gst_compositor_fill_color_yv12;
+FillColorFunction gst_compositor_fill_color_nv12;
 /* NV21 is equal to NV12 */
-FillColorFunction gst_video_mixer_fill_color_y41b;
-FillColorFunction gst_video_mixer_fill_color_rgb;
-FillColorFunction gst_video_mixer_fill_color_bgr;
-FillColorFunction gst_video_mixer_fill_color_xrgb;
-FillColorFunction gst_video_mixer_fill_color_xbgr;
-FillColorFunction gst_video_mixer_fill_color_rgbx;
-FillColorFunction gst_video_mixer_fill_color_bgrx;
-FillColorFunction gst_video_mixer_fill_color_yuy2;
-FillColorFunction gst_video_mixer_fill_color_yvyu;
-FillColorFunction gst_video_mixer_fill_color_uyvy;
+FillColorFunction gst_compositor_fill_color_y41b;
+FillColorFunction gst_compositor_fill_color_rgb;
+FillColorFunction gst_compositor_fill_color_bgr;
+FillColorFunction gst_compositor_fill_color_xrgb;
+FillColorFunction gst_compositor_fill_color_xbgr;
+FillColorFunction gst_compositor_fill_color_rgbx;
+FillColorFunction gst_compositor_fill_color_bgrx;
+FillColorFunction gst_compositor_fill_color_yuy2;
+FillColorFunction gst_compositor_fill_color_yvyu;
+FillColorFunction gst_compositor_fill_color_uyvy;
 
 void
-gst_video_mixer_init_blend (void)
+gst_compositor_init_blend (void)
 {
-  GST_DEBUG_CATEGORY_INIT (gst_videomixer_blend_debug, "videomixer_blend", 0,
-      "video mixer blending functions");
+  GST_DEBUG_CATEGORY_INIT (gst_compositor_blend_debug, "compositor_blend", 0,
+      "video compositor blending functions");
 
-  gst_video_mixer_blend_argb = blend_argb;
-  gst_video_mixer_blend_bgra = blend_bgra;
-  gst_video_mixer_overlay_argb = overlay_argb;
-  gst_video_mixer_overlay_bgra = overlay_bgra;
-  gst_video_mixer_blend_i420 = blend_i420;
-  gst_video_mixer_blend_nv12 = blend_nv12;
-  gst_video_mixer_blend_nv21 = blend_nv21;
-  gst_video_mixer_blend_y444 = blend_y444;
-  gst_video_mixer_blend_y42b = blend_y42b;
-  gst_video_mixer_blend_y41b = blend_y41b;
-  gst_video_mixer_blend_rgb = blend_rgb;
-  gst_video_mixer_blend_xrgb = blend_xrgb;
-  gst_video_mixer_blend_yuy2 = blend_yuy2;
+  gst_compositor_blend_argb = blend_argb;
+  gst_compositor_blend_bgra = blend_bgra;
+  gst_compositor_overlay_argb = overlay_argb;
+  gst_compositor_overlay_bgra = overlay_bgra;
+  gst_compositor_blend_i420 = blend_i420;
+  gst_compositor_blend_nv12 = blend_nv12;
+  gst_compositor_blend_nv21 = blend_nv21;
+  gst_compositor_blend_y444 = blend_y444;
+  gst_compositor_blend_y42b = blend_y42b;
+  gst_compositor_blend_y41b = blend_y41b;
+  gst_compositor_blend_rgb = blend_rgb;
+  gst_compositor_blend_xrgb = blend_xrgb;
+  gst_compositor_blend_yuy2 = blend_yuy2;
 
-  gst_video_mixer_fill_checker_argb = fill_checker_argb_c;
-  gst_video_mixer_fill_checker_bgra = fill_checker_bgra_c;
-  gst_video_mixer_fill_checker_ayuv = fill_checker_ayuv_c;
-  gst_video_mixer_fill_checker_i420 = fill_checker_i420;
-  gst_video_mixer_fill_checker_nv12 = fill_checker_nv12;
-  gst_video_mixer_fill_checker_nv21 = fill_checker_nv21;
-  gst_video_mixer_fill_checker_y444 = fill_checker_y444;
-  gst_video_mixer_fill_checker_y42b = fill_checker_y42b;
-  gst_video_mixer_fill_checker_y41b = fill_checker_y41b;
-  gst_video_mixer_fill_checker_rgb = fill_checker_rgb_c;
-  gst_video_mixer_fill_checker_xrgb = fill_checker_xrgb_c;
-  gst_video_mixer_fill_checker_yuy2 = fill_checker_yuy2_c;
-  gst_video_mixer_fill_checker_uyvy = fill_checker_uyvy_c;
+  gst_compositor_fill_checker_argb = fill_checker_argb_c;
+  gst_compositor_fill_checker_bgra = fill_checker_bgra_c;
+  gst_compositor_fill_checker_ayuv = fill_checker_ayuv_c;
+  gst_compositor_fill_checker_i420 = fill_checker_i420;
+  gst_compositor_fill_checker_nv12 = fill_checker_nv12;
+  gst_compositor_fill_checker_nv21 = fill_checker_nv21;
+  gst_compositor_fill_checker_y444 = fill_checker_y444;
+  gst_compositor_fill_checker_y42b = fill_checker_y42b;
+  gst_compositor_fill_checker_y41b = fill_checker_y41b;
+  gst_compositor_fill_checker_rgb = fill_checker_rgb_c;
+  gst_compositor_fill_checker_xrgb = fill_checker_xrgb_c;
+  gst_compositor_fill_checker_yuy2 = fill_checker_yuy2_c;
+  gst_compositor_fill_checker_uyvy = fill_checker_uyvy_c;
 
-  gst_video_mixer_fill_color_argb = fill_color_argb;
-  gst_video_mixer_fill_color_bgra = fill_color_bgra;
-  gst_video_mixer_fill_color_abgr = fill_color_abgr;
-  gst_video_mixer_fill_color_rgba = fill_color_rgba;
-  gst_video_mixer_fill_color_ayuv = fill_color_ayuv;
-  gst_video_mixer_fill_color_i420 = fill_color_i420;
-  gst_video_mixer_fill_color_yv12 = fill_color_yv12;
-  gst_video_mixer_fill_color_nv12 = fill_color_nv12;
-  gst_video_mixer_fill_color_y444 = fill_color_y444;
-  gst_video_mixer_fill_color_y42b = fill_color_y42b;
-  gst_video_mixer_fill_color_y41b = fill_color_y41b;
-  gst_video_mixer_fill_color_rgb = fill_color_rgb_c;
-  gst_video_mixer_fill_color_bgr = fill_color_bgr_c;
-  gst_video_mixer_fill_color_xrgb = fill_color_xrgb;
-  gst_video_mixer_fill_color_xbgr = fill_color_xbgr;
-  gst_video_mixer_fill_color_rgbx = fill_color_rgbx;
-  gst_video_mixer_fill_color_bgrx = fill_color_bgrx;
-  gst_video_mixer_fill_color_yuy2 = fill_color_yuy2;
-  gst_video_mixer_fill_color_yvyu = fill_color_yvyu;
-  gst_video_mixer_fill_color_uyvy = fill_color_uyvy;
+  gst_compositor_fill_color_argb = fill_color_argb;
+  gst_compositor_fill_color_bgra = fill_color_bgra;
+  gst_compositor_fill_color_abgr = fill_color_abgr;
+  gst_compositor_fill_color_rgba = fill_color_rgba;
+  gst_compositor_fill_color_ayuv = fill_color_ayuv;
+  gst_compositor_fill_color_i420 = fill_color_i420;
+  gst_compositor_fill_color_yv12 = fill_color_yv12;
+  gst_compositor_fill_color_nv12 = fill_color_nv12;
+  gst_compositor_fill_color_y444 = fill_color_y444;
+  gst_compositor_fill_color_y42b = fill_color_y42b;
+  gst_compositor_fill_color_y41b = fill_color_y41b;
+  gst_compositor_fill_color_rgb = fill_color_rgb_c;
+  gst_compositor_fill_color_bgr = fill_color_bgr_c;
+  gst_compositor_fill_color_xrgb = fill_color_xrgb;
+  gst_compositor_fill_color_xbgr = fill_color_xbgr;
+  gst_compositor_fill_color_rgbx = fill_color_rgbx;
+  gst_compositor_fill_color_bgrx = fill_color_bgrx;
+  gst_compositor_fill_color_yuy2 = fill_color_yuy2;
+  gst_compositor_fill_color_yvyu = fill_color_yvyu;
+  gst_compositor_fill_color_uyvy = fill_color_uyvy;
 }

@@ -1,4 +1,4 @@
-/* Generic video mixer plugin
+/* Generic video aggregator plugin
  * Copyright (C) 2008 Wim Taymans <wim@fluendo.com>
  * Copyright (C) 2010 Sebastian Dröge <sebastian.droege@collabora.co.uk>
  *
@@ -18,8 +18,8 @@
  * Boston, MA 02110-1301, USA.
  */
  
-#ifndef __GST_BASE_MIXER_PAD_H__
-#define __GST_BASE_MIXER_PAD_H__
+#ifndef __GST_VIDEO_AGGREGATOR_PAD_H__
+#define __GST_VIDEO_AGGREGATOR_PAD_H__
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
@@ -30,26 +30,26 @@
 
 G_BEGIN_DECLS
 
-#define GST_TYPE_BASE_MIXER_PAD (gst_basemixer_pad_get_type())
-#define GST_BASE_MIXER_PAD(obj) \
-        (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_BASE_MIXER_PAD, GstBasemixerPad))
-#define GST_BASE_MIXER_PAD_CLASS(klass) \
-        (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_VIDEO_MIXER_PAD, GstBasemixerPadClass))
-#define GST_IS_BASE_MIXER_PAD(obj) \
-        (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_BASE_MIXER_PAD))
-#define GST_IS_BASE_MIXER_PAD_CLASS(klass) \
-        (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_BASE_MIXER_PAD))
+#define GST_TYPE_VIDEO_AGGREGATOR_PAD (gst_videoaggregator_pad_get_type())
+#define GST_VIDEO_AGGREGATOR_PAD(obj) \
+        (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_VIDEO_AGGREGATOR_PAD, GstVideoAggregatorPad))
+#define GST_VIDEO_AGGREGATOR_PAD_CLASS(klass) \
+        (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_COMPOSITOR_PAD, GstVideoAggregatorPadClass))
+#define GST_IS_VIDEO_AGGREGATOR_PAD(obj) \
+        (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_VIDEO_AGGREGATOR_PAD))
+#define GST_IS_VIDEO_AGGREGATOR_PAD_CLASS(klass) \
+        (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_VIDEO_AGGREGATOR_PAD))
 
-typedef struct _GstBasemixerPad GstBasemixerPad;
-typedef struct _GstBasemixerPadClass GstBasemixerPadClass;
-typedef struct _GstBasemixerCollect GstBasemixerCollect;
+typedef struct _GstVideoAggregatorPad GstVideoAggregatorPad;
+typedef struct _GstVideoAggregatorPadClass GstVideoAggregatorPadClass;
+typedef struct _GstVideoAggregatorCollect GstVideoAggregatorCollect;
 
 /**
- * GstBasemixerPad:
+ * GstVideoAggregatorPad:
  *
- * The opaque #GstBasemixerPad structure.
+ * The opaque #GstVideoAggregatorPad structure.
  */
-struct _GstBasemixerPad
+struct _GstVideoAggregatorPad
 {
   GstAggregatorPad parent;
 
@@ -76,15 +76,15 @@ struct _GstBasemixerPad
 
   GstClockTime start_time;
   GstClockTime end_time;
-  GstVideoFrame *mixed_frame;
+  GstVideoFrame *aggregated_frame;
 };
 
-struct _GstBasemixerPadClass
+struct _GstVideoAggregatorPadClass
 {
   GstAggregatorPadClass parent_class;
 };
 
-GType gst_basemixer_pad_get_type (void);
+GType gst_videoaggregator_pad_get_type (void);
 
 G_END_DECLS
-#endif /* __GST_BASE_MIXER_PAD_H__ */
+#endif /* __GST_VIDEO_AGGREGATOR_PAD_H__ */
