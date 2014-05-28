@@ -144,11 +144,9 @@ typedef struct
   gboolean flush;
 } EventData;
 
-typedef gboolean (*PadForeachFunc) (GstPad * pad, gpointer user_data);
-
-static gboolean
-_iterate_all_sinkpads (GstAggregator * self, PadForeachFunc func,
-    gpointer user_data)
+gboolean
+gst_aggregator_iterate_sinkpads (GstAggregator * self,
+    GstAggregatorPadForeachFunc func, gpointer user_data)
 {
   gboolean result = FALSE;
   GstIterator *iter;
@@ -177,7 +175,7 @@ _iterate_all_sinkpads (GstAggregator * self, PadForeachFunc func,
 
         GST_LOG_OBJECT (self, "calling function on pad %s:%s",
             GST_DEBUG_PAD_NAME (pad));
-        result = func (pad, user_data);
+        result = func (self, pad, user_data);
 
         done = !result;
 
@@ -187,9 +185,6 @@ _iterate_all_sinkpads (GstAggregator * self, PadForeachFunc func,
         break;
       }
       case GST_ITERATOR_RESYNC:
-        /* We don't reset the result here because we don't push the event
-         * again on pads that got the event already and because we need
-         * to consider the result of the previous pushes */
         gst_iterator_resync (iter);
         break;
       case GST_ITERATOR_ERROR:
@@ -217,7 +212,8 @@ no_iter:
 }
 
 static inline gboolean
-_check_all_pads_with_data_or_eos (GstAggregatorPad * aggpad)
+_check_all_pads_with_data_or_eos (GstAggregator * self,
+    GstAggregatorPad * aggpad)
 {
   if (aggpad->buffer || aggpad->eos) {
     return TRUE;
@@ -313,8 +309,9 @@ aggregate_func (GstAggregator * self)
   GstAggregatorClass *klass = GST_AGGREGATOR_GET_CLASS (self);
 
   GST_LOG_OBJECT (self, "Checking aggregate");
-  while (_iterate_all_sinkpads (self,
-          (PadForeachFunc) _check_all_pads_with_data_or_eos, NULL)) {
+  while (gst_aggregator_iterate_sinkpads (self,
+          (GstAggregatorPadForeachFunc) _check_all_pads_with_data_or_eos,
+          NULL)) {
     GST_ERROR_OBJECT (self, "Actually aggregating!");
 
     priv->flow_return = klass->aggregate (self);
@@ -768,7 +765,8 @@ event_forward_func (GstPad * pad, EventData * evdata)
 }
 
 static gboolean
-_set_flush_pending (GstAggregatorPad * pad, gpointer udata)
+_set_flush_pending (GstAggregator * self, GstAggregatorPad * pad,
+    gpointer udata)
 {
   pad->priv->pending_flush_start = TRUE;
   pad->priv->pending_flush_stop = FALSE;
@@ -790,7 +788,8 @@ _forward_event_to_all_sinkpads (GstAggregator * self, GstEvent * event,
    * as flush_start flush_stop is sometimes sent synchronously
    * while we send the seek event */
   if (flush)
-    _iterate_all_sinkpads (self, (PadForeachFunc) _set_flush_pending, NULL);
+    gst_aggregator_iterate_sinkpads (self,
+        (GstAggregatorPadForeachFunc) _set_flush_pending, NULL);
   gst_pad_forward (self->srcpad, (GstPadForwardFunction) event_forward_func,
       &evdata);
 

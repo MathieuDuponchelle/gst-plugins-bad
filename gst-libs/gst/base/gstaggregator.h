@@ -141,10 +141,16 @@ struct _GstAggregatorClass {
   gpointer _gst_reserved[GST_PADDING];
 };
 
-GstFlowReturn  gst_aggregator_finish_buffer   (GstAggregator *agg, GstBuffer *buf);
+GstFlowReturn  gst_aggregator_finish_buffer   (GstAggregator * agg, GstBuffer *buf);
 void           gst_aggregator_set_src_caps    (GstAggregator * agg, GstCaps * caps);
 
 GType gst_aggregator_get_type(void);
+
+/* API that should eventually land in GstElement itself*/
+typedef gboolean (*GstAggregatorPadForeachFunc)    (GstAggregator * self, GstPad * pad, gpointer userggregator_iterate_sinkpads_data);
+gboolean gst_aggregator_iterate_sinkpads           (GstAggregator * self, GstAggregatorPadForeachFunc func,
+                                                    gpointer user_data);
+
 
 G_END_DECLS
 
