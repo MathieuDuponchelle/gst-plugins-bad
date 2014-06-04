@@ -948,7 +948,7 @@ gst_videoaggregator_fill_queues (GstVideoAggregator * vagg,
 }
 
 static gboolean
-convert_frames (GstVideoAggregatorPad * vagg, GstVideoAggregatorPad * pad)
+convert_frames (GstVideoAggregator * vagg, GstVideoAggregatorPad * pad)
 {
   GstAggregatorPad *bpad = GST_AGGREGATOR_PAD (pad);
 
