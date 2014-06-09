@@ -129,8 +129,8 @@ struct _GstAggregatorClass {
   GstFlowReturn (*clip)      (GstAggregator *agg, GstAggregatorPad * bpad, GstBuffer * buf, GstBuffer ** outbuf);
 
   /* sinkpads virtual methods */
-  gboolean      (*pad_event) (GstAggregator *aggregate, GstAggregatorPad * bpad, GstEvent *event);
-  gboolean      (*pad_query) (GstAggregator *aggregate, GstAggregatorPad * bpad, GstQuery *query);
+  gboolean      (*sink_event) (GstAggregator *aggregate, GstAggregatorPad * bpad, GstEvent *event);
+  gboolean      (*sink_query)  (GstAggregator *aggregate, GstAggregatorPad * bpad, GstQuery *query);
 
   /* srcpad virtual methods */
   gboolean      (*src_event) (GstAggregator *aggregate, GstEvent *event);

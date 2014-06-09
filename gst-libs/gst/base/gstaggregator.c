@@ -461,7 +461,7 @@ _all_flush_stop_received (GstAggregator * self)
 
 /* GstAggregator vmethods default implementations */
 static gboolean
-_pad_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
+_sink_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
 {
   gboolean res = TRUE;
   GstPad *pad = GST_PAD (aggpad);
@@ -920,35 +920,11 @@ src_activate_mode (GstPad * pad,
 }
 
 static gboolean
-_pad_query (GstAggregator * self, GstAggregatorPad * aggpad, GstQuery * query)
+_sink_query (GstAggregator * self, GstAggregatorPad * aggpad, GstQuery * query)
 {
-  gboolean res = TRUE;
-  GstObject *parent;
   GstPad *pad = GST_PAD (aggpad);
 
-  parent = GST_OBJECT_PARENT (pad);
-
-  switch (GST_QUERY_TYPE (query)) {
-    case GST_QUERY_SEEKING:
-    {
-      GstFormat format;
-
-      /* don't pass it along as some (file)sink might claim it does
-       * whereas with a collectpads in between that will not likely work */
-      gst_query_parse_seeking (query, &format, NULL, NULL, NULL);
-      gst_query_set_seeking (query, format, FALSE, 0, -1);
-      res = TRUE;
-      query = NULL;
-      break;
-    }
-    default:
-      break;
-  }
-
-  if (query)
-    return gst_pad_query_default (pad, parent, query);
-  else
-    return res;
+  return gst_pad_query_default (pad, GST_OBJECT (self), query);
 }
 
 /* GObject vmethods implementations */
@@ -972,8 +948,8 @@ gst_aggregator_class_init (GstAggregatorClass * klass)
 
   klass->sinkpads_type = GST_TYPE_AGGREGATOR_PAD;
 
-  klass->pad_event = _pad_event;
-  klass->pad_query = _pad_query;
+  klass->sink_event = _sink_event;
+  klass->sink_query = _sink_query;
 
   klass->src_event = _src_event;
   klass->src_query = _src_query;
@@ -1106,7 +1082,7 @@ pad_query_func (GstPad * pad, GstObject * parent, GstQuery * query)
 {
   GstAggregatorClass *klass = GST_AGGREGATOR_GET_CLASS (parent);
 
-  return klass->pad_query (GST_AGGREGATOR (parent),
+  return klass->sink_query (GST_AGGREGATOR (parent),
       GST_AGGREGATOR_PAD (pad), query);
 }
 
@@ -1115,7 +1091,7 @@ pad_event_func (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   GstAggregatorClass *klass = GST_AGGREGATOR_GET_CLASS (parent);
 
-  return klass->pad_event (GST_AGGREGATOR (parent),
+  return klass->sink_event (GST_AGGREGATOR (parent),
       GST_AGGREGATOR_PAD (pad), event);
 }
 
