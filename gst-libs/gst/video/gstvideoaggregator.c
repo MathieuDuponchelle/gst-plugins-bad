@@ -595,7 +595,7 @@ gst_videoaggregator_sink_query (GstAggregator * agg, GstAggregatorPad * bpad,
     }
     default:
       ret =
-          GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->pad_query
+          GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_query
           (agg, bpad, query);
       break;
   }
@@ -1628,8 +1628,8 @@ gst_videoaggregator_sink_event (GstAggregator * agg, GstAggregatorPad * bpad,
 
   if (event != NULL)
     return
-        GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->pad_event (agg,
-        bpad, event);
+        GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_event
+        (agg, bpad, event);
 
   return ret;
 }
@@ -1851,8 +1851,8 @@ gst_videoaggregator_class_init (GstVideoAggregatorClass * klass)
       "Thibault Saunier <tsaunier@gnome.org>");
 
   agg_class->sinkpads_type = GST_TYPE_VIDEO_AGGREGATOR_PAD;
-  agg_class->pad_query = gst_videoaggregator_sink_query;
-  agg_class->pad_event = gst_videoaggregator_sink_event;
+  agg_class->sink_query = gst_videoaggregator_sink_query;
+  agg_class->sink_event = gst_videoaggregator_sink_event;
   agg_class->flush = gst_videoaggregator_flush;
   agg_class->clip = gst_videoaggregator_sink_clip;
   agg_class->aggregate = gst_videoaggregator_aggregate;
