@@ -895,6 +895,13 @@ src_activate_mode (GstPad * pad,
     GstObject * parent, GstPadMode mode, gboolean active)
 {
   GstAggregator *self = GST_AGGREGATOR (parent);
+  GstAggregatorClass *klass = GST_AGGREGATOR_GET_CLASS (parent);
+
+  if (klass->src_activate) {
+    if (klass->src_activate (self, mode, active) == FALSE) {
+      return FALSE;
+    }
+  }
 
   if (active == TRUE) {
     switch (mode) {

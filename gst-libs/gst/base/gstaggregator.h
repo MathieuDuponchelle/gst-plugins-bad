@@ -135,6 +135,7 @@ struct _GstAggregatorClass {
   /* srcpad virtual methods */
   gboolean      (*src_event) (GstAggregator *aggregate, GstEvent *event);
   gboolean      (*src_query) (GstAggregator *aggregate, GstQuery *query);
+  gboolean      (*src_activate)  (GstAggregator *aggregator, GstPadMode mode, gboolean active);
 
   GstFlowReturn (*aggregate) (GstAggregator *aggregator);
 
