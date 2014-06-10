@@ -38,6 +38,8 @@ G_BEGIN_DECLS
         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_VIDEO_AGGREGATOR))
 #define GST_IS_VIDEO_AGGREGATOR_CLASS(klass) \
         (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_VIDEO_AGGREGATOR))
+#define GST_VIDEO_AGGREGATOR_GET_CLASS(obj) \
+        (G_TYPE_INSTANCE_GET_CLASS((obj),GST_TYPE_VIDEO_AGGREGATOR,GstVideoAggregatorClass))
 
 typedef struct _GstVideoAggregator GstVideoAggregator;
 typedef struct _GstVideoAggregatorClass GstVideoAggregatorClass;
@@ -86,14 +88,20 @@ struct _GstVideoAggregatorClass
 {
   GstAggregatorClass parent_class;
 
-  GstVideoAggregatorPad*               (*create_new_pad)      (GstVideoAggregator *videoaggregator, GstPadTemplate *templ,
-							 const gchar* name, const GstCaps *caps);
+  /* Disable the frame colorspace conversion feature,
+   * making pad template management responsability
+   * of subclasses */
+  gboolean disable_frame_convertion;
+
   gboolean			 (*modify_src_pad_info) (GstVideoAggregator *videoaggregator, GstVideoInfo *info);
-  GstFlowReturn                  (*aggregate_frames)          (GstVideoAggregator *videoaggregator, GstVideoFrame *outframe);
-  GstCaps * (*get_preferred_input_caps) (GstVideoAggregator *videoaggregator);
+  GstFlowReturn      (*aggregate_frames)          (GstVideoAggregator *videoaggregator, GstBuffer *outbuffer);
+  GstCaps *          (*get_preferred_input_caps) (GstVideoAggregator *videoaggregator);
+  GstFlowReturn      (*get_output_buffer) (GstVideoAggregator *videoaggregator, GstBuffer **outbuffer);
+  gboolean           (*update_src_caps) (GstVideoAggregator *videoaggregator);
 };
 
 GType gst_videoaggregator_get_type (void);
+gboolean gst_videoaggregator_src_setcaps (GstVideoAggregator * vagg, GstCaps * caps);
 
 G_END_DECLS
 #endif /* __GST_VIDEO_AGGREGATOR_H__ */
