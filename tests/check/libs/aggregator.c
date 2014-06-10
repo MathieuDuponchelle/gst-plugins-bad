@@ -86,7 +86,7 @@ gst_test_aggregator_aggregate (GstAggregator * aggregator)
 
         if (pad->eos == FALSE)
           all_eos = FALSE;
-        buffer = gst_aggregator_pad_get_buffer (pad);
+        buffer = gst_aggregator_pad_steal_buffer (pad);
         gst_buffer_replace (&buffer, NULL);
 
         g_value_reset (&value);
