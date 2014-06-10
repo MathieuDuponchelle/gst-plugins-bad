@@ -100,6 +100,18 @@ GST_DEBUG_CATEGORY_STATIC (gst_compositor_debug);
                 "   YVYU, I420, YV12, NV12, NV21, Y41B, RGB, BGR, xRGB, xBGR, "\
                 "   RGBx, BGRx } "
 
+static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
+    GST_PAD_SRC,
+    GST_PAD_ALWAYS,
+    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE (FORMATS))
+    );
+
+static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink_%u",
+    GST_PAD_SINK,
+    GST_PAD_REQUEST,
+    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE (FORMATS))
+    );
+
 #define DEFAULT_PAD_ZORDER 0
 #define DEFAULT_PAD_XPOS   0
 #define DEFAULT_PAD_YPOS   0
@@ -113,7 +125,8 @@ enum
   PROP_PAD_ALPHA
 };
 
-G_DEFINE_TYPE (GstCompositorPad, gst_compositor_pad, GST_TYPE_VIDEO_AGGREGATOR_PAD);
+G_DEFINE_TYPE (GstCompositorPad, gst_compositor_pad,
+    GST_TYPE_VIDEO_AGGREGATOR_PAD);
 
 static void
 gst_compositor_pad_get_property (GObject * object, guint prop_id,
@@ -425,7 +438,8 @@ set_functions (GstCompositor * self, GstVideoInfo * info)
 }
 
 static gboolean
-gst_compositor_modify_src_pad_info (GstVideoAggregator * vagg, GstVideoInfo * info)
+gst_compositor_modify_src_pad_info (GstVideoAggregator * vagg,
+    GstVideoInfo * info)
 {
   GList *l;
   gint best_width = -1, best_height = -1;
@@ -464,12 +478,19 @@ gst_compositor_modify_src_pad_info (GstVideoAggregator * vagg, GstVideoInfo * in
 }
 
 static GstFlowReturn
-gst_compositor_aggregate_frames (GstVideoAggregator * vagg, GstVideoFrame * outframe)
+gst_compositor_aggregate_frames (GstVideoAggregator * vagg, GstBuffer * outbuf)
 {
   GList *l;
   GstCompositor *self = GST_COMPOSITOR (vagg);
   BlendFunction composite;
+  GstVideoFrame out_frame, *outframe;
 
+  if (!gst_video_frame_map (&out_frame, &vagg->info, outbuf, GST_MAP_WRITE)) {
+
+    return GST_FLOW_ERROR;
+  }
+
+  outframe = &out_frame;
   /* default to blending */
   composite = self->blend;
   switch (self->background) {
@@ -520,6 +541,8 @@ gst_compositor_aggregate_frames (GstVideoAggregator * vagg, GstVideoFrame * outf
   }
   GST_OBJECT_UNLOCK (vagg);
 
+  gst_video_frame_unmap (outframe);
+
   return GST_FLOW_OK;
 }
 
@@ -529,20 +552,27 @@ gst_compositor_class_init (GstCompositorClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
   GstElementClass *gstelement_class = (GstElementClass *) klass;
-  GstVideoAggregatorClass *videoaggregator_class = (GstVideoAggregatorClass *) klass;
+  GstVideoAggregatorClass *videoaggregator_class =
+      (GstVideoAggregatorClass *) klass;
   GstAggregatorClass *agg_class = (GstAggregatorClass *) klass;
 
   gobject_class->get_property = gst_compositor_get_property;
   gobject_class->set_property = gst_compositor_set_property;
 
   agg_class->sinkpads_type = GST_TYPE_COMPOSITOR_PAD;
-  videoaggregator_class->modify_src_pad_info = gst_compositor_modify_src_pad_info;
+  videoaggregator_class->modify_src_pad_info =
+      gst_compositor_modify_src_pad_info;
   videoaggregator_class->aggregate_frames = gst_compositor_aggregate_frames;
 
   g_object_class_install_property (gobject_class, PROP_BACKGROUND,
       g_param_spec_enum ("background", "Background", "Background type",
           GST_TYPE_COMPOSITOR_BACKGROUND,
           DEFAULT_BACKGROUND, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "Compositor",
       "Filter/Editor/Video",
@@ -561,8 +591,7 @@ gst_compositor_init (GstCompositor * self)
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-  GST_DEBUG_CATEGORY_INIT (gst_compositor_debug, "compositor", 0,
-      "compositor");
+  GST_DEBUG_CATEGORY_INIT (gst_compositor_debug, "compositor", 0, "compositor");
 
   gst_compositor_init_blend ();
 
