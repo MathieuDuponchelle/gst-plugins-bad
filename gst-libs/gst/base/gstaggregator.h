@@ -139,6 +139,10 @@ struct _GstAggregatorClass {
 
   GstFlowReturn (*aggregate) (GstAggregator *aggregator);
 
+  /* Should be linked up first */
+  gboolean      (*stop)           (GstAggregator *aggregator);
+  gboolean      (*start)          (GstAggregator *aggregator);
+
   /*< private >*/
   gpointer _gst_reserved[GST_PADDING];
 };

@@ -228,7 +228,7 @@ _check_all_pads_with_data_or_eos (GstAggregator * self,
 void
 gst_aggregator_set_src_caps (GstAggregator * self, GstCaps * caps)
 {
-  self->priv->srccaps = caps;
+  gst_caps_replace (&self->priv->srccaps, caps);
 }
 
 static void
@@ -257,6 +257,9 @@ _push_mandatory_events (GstAggregator * self)
   }
 
   if (self->priv->srccaps) {
+
+    GST_INFO_OBJECT (self, "pushing caps: %" GST_PTR_FORMAT,
+        self->priv->srccaps);
     if (!gst_pad_push_event (self->srcpad,
             gst_event_new_caps (self->priv->srccaps))) {
       GST_WARNING_OBJECT (self->srcpad, "Sending caps event failed");
@@ -286,10 +289,12 @@ gst_aggregator_finish_buffer (GstAggregator * self, GstBuffer * buf)
 
   if (!g_atomic_int_get (&self->priv->flush_seeking) &&
       gst_pad_is_active (self->srcpad)) {
-    GST_ERROR_OBJECT (self, "pushing buffer");
+    GST_TRACE_OBJECT (self, "pushing buffer %" GST_PTR_FORMAT, buf);
     return gst_pad_push (self->srcpad, buf);
   } else {
-    GST_ERROR ("fuck that mister");
+    GST_INFO_OBJECT (self, "Not pushing (active: %i, flushing: %i)",
+        g_atomic_int_get (&self->priv->flush_seeking),
+        gst_pad_is_active (self->srcpad));
     return GST_FLOW_OK;
   }
 }
@@ -327,7 +332,7 @@ aggregate_func (GstAggregator * self)
   while (priv->send_eos && gst_aggregator_iterate_sinkpads (self,
           (GstAggregatorPadForeachFunc) _check_all_pads_with_data_or_eos,
           NULL)) {
-    GST_ERROR_OBJECT (self, "Actually aggregating!");
+    GST_TRACE_OBJECT (self, "Actually aggregating!");
 
     priv->flow_return = klass->aggregate (self);
 
@@ -363,7 +368,7 @@ iterate_main_context_func (GstAggregator * self)
   g_main_context_iteration (self->priv->mcontext, TRUE);
 }
 
-static void
+static gboolean
 _start (GstAggregator * self)
 {
   self->priv->running = TRUE;
@@ -371,6 +376,8 @@ _start (GstAggregator * self)
   self->priv->send_segment = TRUE;
   self->priv->send_eos = TRUE;
   self->priv->srccaps = NULL;
+
+  return TRUE;
 }
 
 static gboolean
@@ -591,18 +598,28 @@ eat:
   return res;
 }
 
+static gboolean
+_stop (GstAggregator * agg)
+{
+  _reset_flow_values (agg);
+
+  return TRUE;
+}
+
 /* GstElement vmethods implementations */
 static GstStateChangeReturn
 _change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret;
   GstAggregator *self = GST_AGGREGATOR (element);
+  GstAggregatorClass *agg_class = GST_AGGREGATOR_GET_CLASS (self);
+
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
       break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
-      _start (self);
+      agg_class->start (self);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
@@ -626,7 +643,7 @@ _change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
-      _reset_flow_values (self);
+      agg_class->stop (self);
       break;
     default:
       break;
@@ -954,6 +971,8 @@ gst_aggregator_class_init (GstAggregatorClass * klass)
       GST_DEBUG_FG_MAGENTA, "GstAggregator");
 
   klass->sinkpads_type = GST_TYPE_AGGREGATOR_PAD;
+  klass->start = _start;
+  klass->stop = _stop;
 
   klass->sink_event = _sink_event;
   klass->sink_query = _sink_query;
@@ -1195,7 +1214,7 @@ gst_aggregator_pad_steal_buffer (GstAggregatorPad * pad)
 
   PAD_LOCK_EVENT (pad);
   if (pad->buffer) {
-    GST_ERROR_OBJECT (pad, "Consuming buffer");
+    GST_TRACE_OBJECT (pad, "Consuming buffer");
     buffer = pad->buffer;
     pad->buffer = NULL;
     if (pad->priv->pending_eos) {
