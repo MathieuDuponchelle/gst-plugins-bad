@@ -47,24 +47,13 @@
 GST_DEBUG_CATEGORY_STATIC (gst_videoaggregator_debug);
 #define GST_CAT_DEFAULT gst_videoaggregator_debug
 
-#define GST_VIDEO_AGGREGATOR_GET_LOCK(vagg) \
-  (&GST_VIDEO_AGGREGATOR(vagg)->priv->lock)
-#define GST_VIDEO_AGGREGATOR_LOCK(vagg) \
-  (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
-#define GST_VIDEO_AGGREGATOR_UNLOCK(vagg) \
-  (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
-#define GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg) \
-  (&GST_VIDEO_AGGREGATOR(vagg)->priv->setcaps_lock)
-#define GST_VIDEO_AGGREGATOR_SETCAPS_LOCK(vagg) \
-  (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
-#define GST_VIDEO_AGGREGATOR_SETCAPS_UNLOCK(vagg) \
-  (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
+#define GST_VIDEO_AGGREGATOR_GET_LOCK(vagg) (&GST_VIDEO_AGGREGATOR(vagg)->priv->lock)
+#define GST_VIDEO_AGGREGATOR_LOCK(vagg)     (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
+#define GST_VIDEO_AGGREGATOR_UNLOCK(vagg)   (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
 
-static void gst_videoaggregator_child_proxy_init (gpointer g_iface,
-    gpointer iface_data);
-static void gst_videoaggregator_release_pad (GstElement * element,
-    GstPad * pad);
-static void gst_videoaggregator_reset_qos (GstVideoAggregator * vagg);
+#define GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg) (&GST_VIDEO_AGGREGATOR(vagg)->priv->setcaps_lock)
+#define GST_VIDEO_AGGREGATOR_SETCAPS_LOCK(vagg)     (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
+#define GST_VIDEO_AGGREGATOR_SETCAPS_UNLOCK(vagg)   (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
 
 #define DEFAULT_PAD_ZORDER 0
 enum
@@ -95,11 +84,257 @@ struct _GstVideoAggregatorPrivate
   gboolean send_caps;
 };
 
+static gboolean gst_videoaggregator_update_src_caps (GstVideoAggregator * vagg);
+static void gst_videoaggregator_reset_qos (GstVideoAggregator * vagg);
+static gboolean gst_videoaggregator_update_converters (GstVideoAggregator *
+    vagg);
+
 G_DEFINE_TYPE (GstVideoAggregatorPad, gst_videoaggregator_pad,
     GST_TYPE_AGGREGATOR_PAD);
+
+static gboolean
+gst_videoaggregator_pad_sink_setcaps (GstPad * pad, GstObject * parent,
+    GstCaps * caps)
+{
+  GstVideoAggregator *vagg;
+  GstVideoAggregatorPad *vaggpad;
+  GstVideoInfo info;
+  gboolean ret = FALSE;
+
+  GST_INFO_OBJECT (pad, "Setting caps %" GST_PTR_FORMAT, caps);
+
+  vagg = GST_VIDEO_AGGREGATOR (parent);
+  vaggpad = GST_VIDEO_AGGREGATOR_PAD (pad);
+
+  if (!gst_video_info_from_caps (&info, caps)) {
+    GST_DEBUG_OBJECT (pad, "Failed to parse caps");
+    goto beach;
+  }
+
+  GST_VIDEO_AGGREGATOR_LOCK (vagg);
+  if (GST_VIDEO_INFO_FORMAT (&vagg->info) != GST_VIDEO_FORMAT_UNKNOWN) {
+    if (GST_VIDEO_INFO_PAR_N (&vagg->info) != GST_VIDEO_INFO_PAR_N (&info)
+        || GST_VIDEO_INFO_PAR_D (&vagg->info) != GST_VIDEO_INFO_PAR_D (&info) ||
+        GST_VIDEO_INFO_INTERLACE_MODE (&vagg->info) !=
+        GST_VIDEO_INFO_INTERLACE_MODE (&info)) {
+      GST_ERROR_OBJECT (pad,
+          "got input caps %" GST_PTR_FORMAT ", but " "current caps are %"
+          GST_PTR_FORMAT, caps, vagg->priv->current_caps);
+      GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
+      return FALSE;
+    }
+  }
+
+  vaggpad->info = info;
+
+  ret = gst_videoaggregator_update_converters (vagg);
+  GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
+
+  if (ret)
+    ret = gst_videoaggregator_update_src_caps (vagg);
+
+beach:
+  return ret;
+}
+
+static GstCaps *
+gst_videoaggregator_pad_sink_getcaps (GstPad * pad, GstVideoAggregator * vagg,
+    GstCaps * filter)
+{
+  GstCaps *srccaps;
+  GstCaps *template_caps;
+  GstCaps *filtered_caps;
+  GstCaps *returned_caps;
+  GstStructure *s;
+  gboolean had_current_caps = TRUE;
+  gint i, n;
+  GstAggregator *agg = GST_AGGREGATOR (vagg);
+
+  template_caps = gst_pad_get_pad_template_caps (GST_PAD (agg->srcpad));
+
+  srccaps = gst_pad_get_current_caps (GST_PAD (agg->srcpad));
+  if (srccaps == NULL) {
+    had_current_caps = FALSE;
+    srccaps = template_caps;
+  }
+
+  srccaps = gst_caps_make_writable (srccaps);
+
+  n = gst_caps_get_size (srccaps);
+  for (i = 0; i < n; i++) {
+    s = gst_caps_get_structure (srccaps, i);
+    gst_structure_set (s, "width", GST_TYPE_INT_RANGE, 1, G_MAXINT,
+        "height", GST_TYPE_INT_RANGE, 1, G_MAXINT,
+        "framerate", GST_TYPE_FRACTION_RANGE, 0, 1, G_MAXINT, 1, NULL);
+    if (!gst_structure_has_field (s, "pixel-aspect-ratio"))
+      gst_structure_set (s, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
+          NULL);
+
+    gst_structure_remove_fields (s, "colorimetry", "chroma-site", "format",
+        NULL);
+  }
+
+  filtered_caps = srccaps;
+  if (filter)
+    filtered_caps = gst_caps_intersect (srccaps, filter);
+  returned_caps = gst_caps_intersect (filtered_caps, template_caps);
+
+  gst_caps_unref (srccaps);
+  if (filter)
+    gst_caps_unref (filtered_caps);
+  if (had_current_caps)
+    gst_caps_unref (template_caps);
+
+  return returned_caps;
+}
+
+static void
+gst_videoaggregator_pad_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (object);
+
+  switch (prop_id) {
+    case PROP_PAD_ZORDER:
+      g_value_set_uint (value, pad->zorder);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static int
+pad_zorder_compare (const GstVideoAggregatorPad * pad1,
+    const GstVideoAggregatorPad * pad2)
+{
+  return pad1->zorder - pad2->zorder;
+}
+
+static void
+gst_videoaggregator_pad_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (object);
+  GstVideoAggregator *vagg =
+      GST_VIDEO_AGGREGATOR (gst_pad_get_parent (GST_PAD (pad)));
+
+  switch (prop_id) {
+    case PROP_PAD_ZORDER:
+      GST_OBJECT_LOCK (vagg);
+      pad->zorder = g_value_get_uint (value);
+      GST_ELEMENT (vagg)->sinkpads = g_list_sort (GST_ELEMENT (vagg)->sinkpads,
+          (GCompareFunc) pad_zorder_compare);
+      GST_OBJECT_UNLOCK (vagg);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+
+  gst_object_unref (vagg);
+}
+
+static gboolean
+_flush_pad (GstAggregatorPad * aggpad, GstAggregator * aggregator)
+{
+  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (aggregator);
+  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (aggpad);
+
+  gst_videoaggregator_reset_qos (vagg);
+  gst_buffer_replace (&pad->buffer, NULL);
+  pad->start_time = -1;
+  pad->end_time = -1;
+
+  return TRUE;
+}
+
+static void
+gst_videoaggregator_pad_finalize (GObject * o)
+{
+  GstVideoAggregatorPad *vaggpad = GST_VIDEO_AGGREGATOR_PAD (o);
+
+  if (vaggpad->convert)
+    videoconvert_convert_free (vaggpad->convert);
+  vaggpad->convert = NULL;
+
+  G_OBJECT_CLASS (gst_videoaggregator_pad_parent_class)->dispose (o);
+}
+
+static void
+gst_videoaggregator_pad_class_init (GstVideoAggregatorPadClass * klass)
+{
+  GObjectClass *gobject_class = (GObjectClass *) klass;
+  GstAggregatorPadClass *aggpadclass = (GstAggregatorPadClass *) klass;
+
+  gobject_class->set_property = gst_videoaggregator_pad_set_property;
+  gobject_class->get_property = gst_videoaggregator_pad_get_property;
+  gobject_class->finalize = gst_videoaggregator_pad_finalize;
+
+  g_object_class_install_property (gobject_class, PROP_PAD_ZORDER,
+      g_param_spec_uint ("zorder", "Z-Order", "Z Order of the picture",
+          0, 10000, DEFAULT_PAD_ZORDER,
+          G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
+
+  aggpadclass->flush = GST_DEBUG_FUNCPTR (_flush_pad);
+}
+
+static void
+gst_videoaggregator_pad_init (GstVideoAggregatorPad * vaggpad)
+{
+  vaggpad->zorder = DEFAULT_PAD_ZORDER;
+  vaggpad->convert = NULL;
+  vaggpad->need_conversion_update = FALSE;
+  vaggpad->aggregated_frame = NULL;
+  vaggpad->converted_buffer = NULL;
+}
+
+/* GstChildProxy implementation */
+static GObject *
+gst_videoaggregator_child_proxy_get_child_by_index (GstChildProxy * child_proxy,
+    guint index)
+{
+  GObject *obj;
+  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (child_proxy);
+
+  GST_OBJECT_LOCK (vagg);
+  if ((obj = g_list_nth_data (GST_ELEMENT (vagg)->sinkpads, index)))
+    g_object_ref (obj);
+  GST_OBJECT_UNLOCK (vagg);
+
+  return obj;
+}
+
+static guint
+gst_videoaggregator_child_proxy_get_children_count (GstChildProxy * child_proxy)
+{
+  guint count = 0;
+
+  GST_OBJECT_LOCK (child_proxy);
+  count = GST_ELEMENT (child_proxy)->numsinkpads;
+  GST_OBJECT_UNLOCK (child_proxy);
+
+  GST_INFO_OBJECT (child_proxy, "Children Count: %d", count);
+
+  return count;
+}
+
+static void
+gst_videoaggregator_child_proxy_init (gpointer g_iface, gpointer iface_data)
+{
+  GstChildProxyInterface *iface = g_iface;
+
+  GST_INFO ("intializing child proxy interface");
+  iface->get_child_by_index =
+      gst_videoaggregator_child_proxy_get_child_by_index;
+  iface->get_children_count =
+      gst_videoaggregator_child_proxy_get_children_count;
+}
+
 G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GstVideoAggregator, gst_videoaggregator,
     GST_TYPE_AGGREGATOR, G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY,
         gst_videoaggregator_child_proxy_init));
+
 
 static gboolean
 gst_videoaggregator_src_setcaps (GstVideoAggregator * vagg, GstCaps * caps)
@@ -218,8 +453,8 @@ gst_videoaggregator_update_src_caps (GstVideoAggregator * vagg)
     info.par_n = GST_VIDEO_INFO_PAR_N (&vagg->info);
     info.par_d = GST_VIDEO_INFO_PAR_D (&vagg->info);
 
-    if (vagg_klass->update_src_info) {
-      if (!vagg_klass->update_src_info (vagg, &info)) {
+    if (vagg_klass->update_info) {
+      if (!vagg_klass->update_info (vagg, &info)) {
         ret = FALSE;
         GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
         goto done;
@@ -268,8 +503,9 @@ gst_videoaggregator_update_src_caps (GstVideoAggregator * vagg)
     GST_OBJECT_UNLOCK (vagg);
 
     if (gst_videoaggregator_src_setcaps (vagg, caps)) {
-      if (vagg_klass->negotiated)
-        ret = GST_VIDEO_AGGREGATOR_GET_CLASS (vagg)->negotiated (vagg, caps);
+      if (vagg_klass->negotiated_caps)
+        ret =
+            GST_VIDEO_AGGREGATOR_GET_CLASS (vagg)->negotiated_caps (vagg, caps);
     }
     gst_caps_unref (caps);
   } else {
@@ -311,7 +547,7 @@ _find_best_video_format (GstVideoAggregator * vagg, GstCaps * downstream_caps,
     if (need_alpha && !(pad->info.finfo->flags & GST_VIDEO_FORMAT_FLAG_ALPHA))
       continue;
 
-    /* This can happen if we release a pad and another pad hasn't been negotiated yet */
+    /* This can happen if we release a pad and another pad hasn't been negotiated_caps yet */
     if (GST_VIDEO_INFO_FORMAT (&pad->info) == GST_VIDEO_FORMAT_UNKNOWN)
       continue;
 
@@ -453,297 +689,6 @@ gst_videoaggregator_update_converters (GstVideoAggregator * vagg)
 
   g_free (best_colorimetry);
   return TRUE;
-}
-
-static gboolean
-gst_videoaggregator_pad_sink_setcaps (GstPad * pad, GstObject * parent,
-    GstCaps * caps)
-{
-  GstVideoAggregator *vagg;
-  GstVideoAggregatorPad *vaggpad;
-  GstVideoInfo info;
-  gboolean ret = FALSE;
-
-  GST_INFO_OBJECT (pad, "Setting caps %" GST_PTR_FORMAT, caps);
-
-  vagg = GST_VIDEO_AGGREGATOR (parent);
-  vaggpad = GST_VIDEO_AGGREGATOR_PAD (pad);
-
-  if (!gst_video_info_from_caps (&info, caps)) {
-    GST_DEBUG_OBJECT (pad, "Failed to parse caps");
-    goto beach;
-  }
-
-  GST_VIDEO_AGGREGATOR_LOCK (vagg);
-  if (GST_VIDEO_INFO_FORMAT (&vagg->info) != GST_VIDEO_FORMAT_UNKNOWN) {
-    if (GST_VIDEO_INFO_PAR_N (&vagg->info) != GST_VIDEO_INFO_PAR_N (&info)
-        || GST_VIDEO_INFO_PAR_D (&vagg->info) != GST_VIDEO_INFO_PAR_D (&info) ||
-        GST_VIDEO_INFO_INTERLACE_MODE (&vagg->info) !=
-        GST_VIDEO_INFO_INTERLACE_MODE (&info)) {
-      GST_ERROR_OBJECT (pad,
-          "got input caps %" GST_PTR_FORMAT ", but " "current caps are %"
-          GST_PTR_FORMAT, caps, vagg->priv->current_caps);
-      GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
-      return FALSE;
-    }
-  }
-
-  vaggpad->info = info;
-
-  ret = gst_videoaggregator_update_converters (vagg);
-  GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
-
-  if (ret)
-    ret = gst_videoaggregator_update_src_caps (vagg);
-
-beach:
-  return ret;
-}
-
-static GstCaps *
-gst_videoaggregator_pad_sink_getcaps (GstPad * pad, GstVideoAggregator * vagg,
-    GstCaps * filter)
-{
-  GstCaps *srccaps;
-  GstCaps *template_caps;
-  GstCaps *filtered_caps;
-  GstCaps *returned_caps;
-  GstStructure *s;
-  gboolean had_current_caps = TRUE;
-  gint i, n;
-  GstAggregator *agg = GST_AGGREGATOR (vagg);
-
-  template_caps = gst_pad_get_pad_template_caps (GST_PAD (agg->srcpad));
-
-  srccaps = gst_pad_get_current_caps (GST_PAD (agg->srcpad));
-  if (srccaps == NULL) {
-    had_current_caps = FALSE;
-    srccaps = template_caps;
-  }
-
-  srccaps = gst_caps_make_writable (srccaps);
-
-  n = gst_caps_get_size (srccaps);
-  for (i = 0; i < n; i++) {
-    s = gst_caps_get_structure (srccaps, i);
-    gst_structure_set (s, "width", GST_TYPE_INT_RANGE, 1, G_MAXINT,
-        "height", GST_TYPE_INT_RANGE, 1, G_MAXINT,
-        "framerate", GST_TYPE_FRACTION_RANGE, 0, 1, G_MAXINT, 1, NULL);
-    if (!gst_structure_has_field (s, "pixel-aspect-ratio"))
-      gst_structure_set (s, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
-          NULL);
-
-    gst_structure_remove_fields (s, "colorimetry", "chroma-site", "format",
-        NULL);
-  }
-
-  filtered_caps = srccaps;
-  if (filter)
-    filtered_caps = gst_caps_intersect (srccaps, filter);
-  returned_caps = gst_caps_intersect (filtered_caps, template_caps);
-
-  gst_caps_unref (srccaps);
-  if (filter)
-    gst_caps_unref (filtered_caps);
-  if (had_current_caps)
-    gst_caps_unref (template_caps);
-
-  return returned_caps;
-}
-
-static gboolean
-gst_videoaggregator_pad_sink_acceptcaps (GstPad * pad,
-    GstVideoAggregator * vagg, GstCaps * caps)
-{
-  gboolean ret;
-  GstCaps *modified_caps;
-  GstCaps *accepted_caps;
-  GstCaps *template_caps;
-  gboolean had_current_caps = TRUE;
-  gint i, n;
-  GstStructure *s;
-  GstAggregator *agg = GST_AGGREGATOR (vagg);
-
-  GST_DEBUG_OBJECT (pad, "%" GST_PTR_FORMAT, caps);
-
-  accepted_caps = gst_pad_get_current_caps (GST_PAD (agg->srcpad));
-
-  template_caps = gst_pad_get_pad_template_caps (GST_PAD (agg->srcpad));
-
-  if (accepted_caps == NULL) {
-    accepted_caps = template_caps;
-    had_current_caps = FALSE;
-  }
-
-  accepted_caps = gst_caps_make_writable (accepted_caps);
-
-  GST_LOG_OBJECT (pad, "src caps %" GST_PTR_FORMAT, accepted_caps);
-
-  n = gst_caps_get_size (accepted_caps);
-  for (i = 0; i < n; i++) {
-    s = gst_caps_get_structure (accepted_caps, i);
-    gst_structure_set (s, "width", GST_TYPE_INT_RANGE, 1, G_MAXINT,
-        "height", GST_TYPE_INT_RANGE, 1, G_MAXINT,
-        "framerate", GST_TYPE_FRACTION_RANGE, 0, 1, G_MAXINT, 1, NULL);
-    if (!gst_structure_has_field (s, "pixel-aspect-ratio"))
-      gst_structure_set (s, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
-          NULL);
-
-    gst_structure_remove_fields (s, "colorimetry", "chroma-site", "format",
-        NULL);
-  }
-
-  modified_caps = gst_caps_intersect (accepted_caps, template_caps);
-
-  ret = gst_caps_can_intersect (caps, accepted_caps);
-  GST_DEBUG_OBJECT (pad, "%saccepted caps %" GST_PTR_FORMAT,
-      (ret ? "" : "not "), caps);
-  GST_DEBUG_OBJECT (pad, "acceptable caps are %" GST_PTR_FORMAT, accepted_caps);
-  gst_caps_unref (accepted_caps);
-  gst_caps_unref (modified_caps);
-  if (had_current_caps)
-    gst_caps_unref (template_caps);
-  return ret;
-}
-
-static gboolean
-gst_videoaggregator_sink_query (GstAggregator * agg, GstAggregatorPad * bpad,
-    GstQuery * query)
-{
-  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (agg);
-  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (bpad);
-  gboolean ret = FALSE;
-
-  switch (GST_QUERY_TYPE (query)) {
-    case GST_QUERY_CAPS:
-    {
-      GstCaps *filter, *caps;
-
-      gst_query_parse_caps (query, &filter);
-      caps = gst_videoaggregator_pad_sink_getcaps (GST_PAD (pad), vagg, filter);
-      gst_query_set_caps_result (query, caps);
-      gst_caps_unref (caps);
-      ret = TRUE;
-      break;
-    }
-    case GST_QUERY_ACCEPT_CAPS:
-    {
-      GstCaps *caps;
-
-      gst_query_parse_accept_caps (query, &caps);
-      ret = gst_videoaggregator_pad_sink_acceptcaps (GST_PAD (pad), vagg, caps);
-      gst_query_set_accept_caps_result (query, ret);
-      ret = TRUE;
-      break;
-    }
-    default:
-      ret =
-          GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_query
-          (agg, bpad, query);
-      break;
-  }
-  return ret;
-}
-
-static void
-gst_videoaggregator_pad_get_property (GObject * object, guint prop_id,
-    GValue * value, GParamSpec * pspec)
-{
-  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (object);
-
-  switch (prop_id) {
-    case PROP_PAD_ZORDER:
-      g_value_set_uint (value, pad->zorder);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
-  }
-}
-
-static int
-pad_zorder_compare (const GstVideoAggregatorPad * pad1,
-    const GstVideoAggregatorPad * pad2)
-{
-  return pad1->zorder - pad2->zorder;
-}
-
-static void
-gst_videoaggregator_pad_set_property (GObject * object, guint prop_id,
-    const GValue * value, GParamSpec * pspec)
-{
-  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (object);
-  GstVideoAggregator *vagg =
-      GST_VIDEO_AGGREGATOR (gst_pad_get_parent (GST_PAD (pad)));
-
-  switch (prop_id) {
-    case PROP_PAD_ZORDER:
-      GST_OBJECT_LOCK (vagg);
-      pad->zorder = g_value_get_uint (value);
-      GST_ELEMENT (vagg)->sinkpads = g_list_sort (GST_ELEMENT (vagg)->sinkpads,
-          (GCompareFunc) pad_zorder_compare);
-      GST_OBJECT_UNLOCK (vagg);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
-  }
-
-  gst_object_unref (vagg);
-}
-
-static gboolean
-_flush_pad (GstAggregatorPad * aggpad, GstAggregator * aggregator)
-{
-  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (aggregator);
-  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (aggpad);
-
-  gst_videoaggregator_reset_qos (vagg);
-  gst_buffer_replace (&pad->buffer, NULL);
-  pad->start_time = -1;
-  pad->end_time = -1;
-
-  return TRUE;
-}
-
-static void
-gst_videoaggregator_pad_finalize (GObject * o)
-{
-  GstVideoAggregatorPad *vaggpad = GST_VIDEO_AGGREGATOR_PAD (o);
-
-  if (vaggpad->convert)
-    videoconvert_convert_free (vaggpad->convert);
-  vaggpad->convert = NULL;
-
-  G_OBJECT_CLASS (gst_videoaggregator_pad_parent_class)->dispose (o);
-}
-
-static void
-gst_videoaggregator_pad_class_init (GstVideoAggregatorPadClass * klass)
-{
-  GObjectClass *gobject_class = (GObjectClass *) klass;
-  GstAggregatorPadClass *aggpadclass = (GstAggregatorPadClass *) klass;
-
-  gobject_class->set_property = gst_videoaggregator_pad_set_property;
-  gobject_class->get_property = gst_videoaggregator_pad_get_property;
-  gobject_class->finalize = gst_videoaggregator_pad_finalize;
-
-  g_object_class_install_property (gobject_class, PROP_PAD_ZORDER,
-      g_param_spec_uint ("zorder", "Z-Order", "Z Order of the picture",
-          0, 10000, DEFAULT_PAD_ZORDER,
-          G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS));
-
-  aggpadclass->flush = GST_DEBUG_FUNCPTR (_flush_pad);
-}
-
-static void
-gst_videoaggregator_pad_init (GstVideoAggregatorPad * vaggpad)
-{
-  vaggpad->zorder = DEFAULT_PAD_ZORDER;
-  vaggpad->convert = NULL;
-  vaggpad->need_conversion_update = FALSE;
-  vaggpad->aggregated_frame = NULL;
-  vaggpad->converted_buffer = NULL;
 }
 
 /* GstVideoAggregator */
@@ -1008,7 +953,7 @@ gst_videoaggregator_fill_queues (GstVideoAggregator * vagg,
 }
 
 static gboolean
-prepare_frames (GstVideoAggregatorPad * vagg, GstVideoAggregatorPad * pad)
+prepare_frames (GstVideoAggregator * vagg, GstVideoAggregatorPad * pad)
 {
   GstAggregatorPad *bpad = GST_AGGREGATOR_PAD (pad);
 
@@ -1034,7 +979,10 @@ prepare_frames (GstVideoAggregatorPad * vagg, GstVideoAggregatorPad * pad)
       gst_object_sync_values (GST_OBJECT (pad), stream_time);
 
 
-    gst_video_frame_map (frame, &pad->buffer_vinfo, pad->buffer, GST_MAP_READ);
+    if (!gst_video_frame_map (frame, &pad->buffer_vinfo, pad->buffer,
+            GST_MAP_READ)) {
+      GST_WARNING_OBJECT (vagg, "Could not map input buffer");
+    }
 
     if (pad->convert) {
       gint converted_size;
@@ -1053,8 +1001,13 @@ prepare_frames (GstVideoAggregatorPad * vagg, GstVideoAggregatorPad * pad)
       converted_size = converted_size > outsize ? converted_size : outsize;
       converted_buf = gst_buffer_new_allocate (NULL, converted_size, &params);
 
-      gst_video_frame_map (converted_frame, &(pad->conversion_info),
-          converted_buf, GST_MAP_READWRITE);
+      if (!gst_video_frame_map (converted_frame, &(pad->conversion_info),
+              converted_buf, GST_MAP_READWRITE)) {
+        GST_WARNING_OBJECT (vagg, "Could not map converted frame");
+
+        return FALSE;
+      }
+
       videoconvert_convert_convert (pad->convert, converted_frame, frame);
       pad->converted_buffer = converted_buf;
       gst_video_frame_unmap (frame);
@@ -1174,7 +1127,7 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
   gint res;
   gint64 jitter;
 
-  /* If we're not negotiated yet... */
+  /* If we're not negotiated_caps yet... */
   if (GST_VIDEO_INFO_FORMAT (&vagg->info) == GST_VIDEO_FORMAT_UNKNOWN)
     return GST_FLOW_NOT_NEGOTIATED;
 
@@ -1744,6 +1697,100 @@ gst_videoaggregator_get_output_buffer (GstVideoAggregator * videoaggregator,
   return GST_FLOW_OK;
 }
 
+static gboolean
+gst_videoaggregator_pad_sink_acceptcaps (GstPad * pad,
+    GstVideoAggregator * vagg, GstCaps * caps)
+{
+  gboolean ret;
+  GstCaps *modified_caps;
+  GstCaps *accepted_caps;
+  GstCaps *template_caps;
+  gboolean had_current_caps = TRUE;
+  gint i, n;
+  GstStructure *s;
+  GstAggregator *agg = GST_AGGREGATOR (vagg);
+
+  GST_DEBUG_OBJECT (pad, "%" GST_PTR_FORMAT, caps);
+
+  accepted_caps = gst_pad_get_current_caps (GST_PAD (agg->srcpad));
+
+  template_caps = gst_pad_get_pad_template_caps (GST_PAD (agg->srcpad));
+
+  if (accepted_caps == NULL) {
+    accepted_caps = template_caps;
+    had_current_caps = FALSE;
+  }
+
+  accepted_caps = gst_caps_make_writable (accepted_caps);
+
+  GST_LOG_OBJECT (pad, "src caps %" GST_PTR_FORMAT, accepted_caps);
+
+  n = gst_caps_get_size (accepted_caps);
+  for (i = 0; i < n; i++) {
+    s = gst_caps_get_structure (accepted_caps, i);
+    gst_structure_set (s, "width", GST_TYPE_INT_RANGE, 1, G_MAXINT,
+        "height", GST_TYPE_INT_RANGE, 1, G_MAXINT,
+        "framerate", GST_TYPE_FRACTION_RANGE, 0, 1, G_MAXINT, 1, NULL);
+    if (!gst_structure_has_field (s, "pixel-aspect-ratio"))
+      gst_structure_set (s, "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
+          NULL);
+
+    gst_structure_remove_fields (s, "colorimetry", "chroma-site", "format",
+        NULL);
+  }
+
+  modified_caps = gst_caps_intersect (accepted_caps, template_caps);
+
+  ret = gst_caps_can_intersect (caps, accepted_caps);
+  GST_DEBUG_OBJECT (pad, "%saccepted caps %" GST_PTR_FORMAT,
+      (ret ? "" : "not "), caps);
+  GST_DEBUG_OBJECT (pad, "acceptable caps are %" GST_PTR_FORMAT, accepted_caps);
+  gst_caps_unref (accepted_caps);
+  gst_caps_unref (modified_caps);
+  if (had_current_caps)
+    gst_caps_unref (template_caps);
+  return ret;
+}
+
+static gboolean
+gst_videoaggregator_sink_query (GstAggregator * agg, GstAggregatorPad * bpad,
+    GstQuery * query)
+{
+  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (agg);
+  GstVideoAggregatorPad *pad = GST_VIDEO_AGGREGATOR_PAD (bpad);
+  gboolean ret = FALSE;
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_CAPS:
+    {
+      GstCaps *filter, *caps;
+
+      gst_query_parse_caps (query, &filter);
+      caps = gst_videoaggregator_pad_sink_getcaps (GST_PAD (pad), vagg, filter);
+      gst_query_set_caps_result (query, caps);
+      gst_caps_unref (caps);
+      ret = TRUE;
+      break;
+    }
+    case GST_QUERY_ACCEPT_CAPS:
+    {
+      GstCaps *caps;
+
+      gst_query_parse_accept_caps (query, &caps);
+      ret = gst_videoaggregator_pad_sink_acceptcaps (GST_PAD (pad), vagg, caps);
+      gst_query_set_accept_caps_result (query, ret);
+      ret = TRUE;
+      break;
+    }
+    default:
+      ret =
+          GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_query
+          (agg, bpad, query);
+      break;
+  }
+  return ret;
+}
+
 /* GObject vmethods */
 static void
 gst_videoaggregator_finalize (GObject * o)
@@ -1784,48 +1831,6 @@ gst_videoaggregator_set_property (GObject * object,
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
-}
-
-/* GstChildProxy implementation */
-static GObject *
-gst_videoaggregator_child_proxy_get_child_by_index (GstChildProxy * child_proxy,
-    guint index)
-{
-  GObject *obj;
-  GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (child_proxy);
-
-  GST_OBJECT_LOCK (vagg);
-  if ((obj = g_list_nth_data (GST_ELEMENT (vagg)->sinkpads, index)))
-    g_object_ref (obj);
-  GST_OBJECT_UNLOCK (vagg);
-
-  return obj;
-}
-
-static guint
-gst_videoaggregator_child_proxy_get_children_count (GstChildProxy * child_proxy)
-{
-  guint count = 0;
-
-  GST_OBJECT_LOCK (child_proxy);
-  count = GST_ELEMENT (child_proxy)->numsinkpads;
-  GST_OBJECT_UNLOCK (child_proxy);
-
-  GST_INFO_OBJECT (child_proxy, "Children Count: %d", count);
-
-  return count;
-}
-
-static void
-gst_videoaggregator_child_proxy_init (gpointer g_iface, gpointer iface_data)
-{
-  GstChildProxyInterface *iface = g_iface;
-
-  GST_INFO ("intializing child proxy interface");
-  iface->get_child_by_index =
-      gst_videoaggregator_child_proxy_get_child_by_index;
-  iface->get_children_count =
-      gst_videoaggregator_child_proxy_get_children_count;
 }
 
 /* GObject boilerplate */
