@@ -136,6 +136,57 @@ struct _GstAggregator {
   gpointer _gst_reserved[GST_PADDING];
 };
 
+/*
+ * GstAggregatorClass:
+ * @flush:          Optional.
+ *                  Called after a succesful flushing seek, once all the flush
+ *                  stops have been received. Flush pad-specific data in 
+ *                  #GstAggregatorPad->flush.
+ * @clip:           Optional.
+ *                  Called when a buffer is received on a sink pad, the task
+ *                  of clipping it and translating it to the current segment
+ *                  falls on the subclass.
+ * @sink_event:     Optional.
+ *                  Called when an event is received on a sink pad, the subclass
+ *                  should always chain up.
+ * @sink_query:     Optional.
+ *                  Called when a query is received on a sink pad, the subclass
+ *                  should always chain up.
+ * @src_event:      Optional.
+ *                  Called when an event is received on the src pad, the subclass
+ *                  should always chain up.
+ * @src_query:      Optional.
+ *                  Called when a query is received on the src pad, the subclass
+ *                  should always chain up.
+ * @src_activate:   Optional.
+ *                  Called when the src pad is activated, it will start/stop its
+ *                  pad task right after that call.
+ * @aggregate:      Mandatory.
+ *                  Called when buffers are queued on all sinkpads. Classes
+ *                  should iterate the GstElement->sinkpads and peek or steal
+ *                  buffers from the #GstAggregatorPads. If the subclass returns
+ *                  GST_FLOW_EOS, sending of the eos event will be taken care
+ *                  of. Once / if a buffer has been constructed from the
+ *                  aggregated buffers, the subclass should call _finish_buffer.
+ * @stop:           Optional.
+ *                  Should be linked up first. Called when the
+ *                  element goes from PAUSED to READY. The subclass should free
+ *                  all resources and reset its state.
+ * @start:          Optional.
+ *                  Should be linked up first. Called when the element goes from
+ *                  READY to PAUSED. The subclass should get ready to process
+ *                  aggregated buffers.
+ *
+ * The aggregator base class will handle in a thread-safe way all manners of
+ * concurrent flushes, seeks, pad additions and removals, leaving to the
+ * subclass the responsibility of clipping buffers, and aggregating buffers in
+ * the way the implementor sees fit.
+ *
+ * It will also take care of event ordering (stream-start, segment, eos).
+ *
+ * Basically, a basic implementation will override @aggregate, and call
+ * _finish_buffer from inside that function.
+ */
 struct _GstAggregatorClass {
   GstElementClass parent_class;
 
