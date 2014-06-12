@@ -1056,9 +1056,11 @@ gst_aggregator_get_type (void)
 static GstFlowReturn
 _chain (GstPad * pad, GstObject * object, GstBuffer * buffer)
 {
+  GstBuffer *actual_buf = buffer;
   GstAggregator *self = GST_AGGREGATOR (object);
   GstAggregatorPrivate *priv = self->priv;
   GstAggregatorPad *aggpad = GST_AGGREGATOR_PAD (pad);
+  GstAggregatorClass *aggclass = GST_AGGREGATOR_GET_CLASS (object);
 
   GST_DEBUG_OBJECT (aggpad, "Start chaining a buffer %" GST_PTR_FORMAT, buffer);
 
@@ -1078,10 +1080,15 @@ _chain (GstPad * pad, GstObject * object, GstBuffer * buffer)
   if (g_atomic_int_get (&aggpad->flushing) == TRUE)
     goto flushing;
 
+
+  if (aggclass->clip) {
+    aggclass->clip (self, aggpad, buffer, &actual_buf);
+  }
+
   PAD_LOCK_EVENT (aggpad);
   if (aggpad->buffer)
     gst_buffer_unref (aggpad->buffer);
-  aggpad->buffer = buffer;
+  aggpad->buffer = actual_buf;
   PAD_UNLOCK_EVENT (aggpad);
 
   _add_aggregate_gsource (self);
