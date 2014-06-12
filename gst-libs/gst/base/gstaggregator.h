@@ -93,16 +93,16 @@ struct _GstAggregatorPadClass
   gpointer _gst_reserved[GST_PADDING];
 };
 
-GType gst_aggregator_pad_get_type(void);
+GType gst_aggregator_pad_get_type           (void);
 
 /****************************
  * GstAggregatorPad methods *
  ***************************/
 
-GstBuffer * gst_aggregator_pad_steal_buffer (GstAggregatorPad *pad);
-GstBuffer * gst_aggregator_pad_get_buffer (GstAggregatorPad *pad);
+GstBuffer * gst_aggregator_pad_steal_buffer (GstAggregatorPad *  pad);
+GstBuffer * gst_aggregator_pad_get_buffer   (GstAggregatorPad *  pad);
 
-GstAggregatorPad * gst_aggregator_pad_new     (void);
+GstAggregatorPad * gst_aggregator_pad_new   (void);
 
 /*********************
  * GstAggregator API *
@@ -141,24 +141,39 @@ struct _GstAggregatorClass {
 
   GType sinkpads_type;
 
-  GstFlowReturn (*flush)     (GstAggregator *aggregator);
+  GstFlowReturn (*flush)          (GstAggregator    *  aggregator);
 
-  GstFlowReturn (*clip)      (GstAggregator *agg, GstAggregatorPad * bpad, GstBuffer * buf, GstBuffer ** outbuf);
+  GstFlowReturn (*clip)           (GstAggregator    *  agg,
+                                   GstAggregatorPad *  bpad,
+                                   GstBuffer        *  buf,
+                                   GstBuffer        ** outbuf);
 
   /* sinkpads virtual methods */
-  gboolean      (*sink_event) (GstAggregator *aggregate, GstAggregatorPad * bpad, GstEvent *event);
-  gboolean      (*sink_query)  (GstAggregator *aggregate, GstAggregatorPad * bpad, GstQuery *query);
+  gboolean      (*sink_event)     (GstAggregator    *  aggregate,
+                                   GstAggregatorPad *  bpad,
+                                   GstEvent         *  event);
+
+  gboolean      (*sink_query)     (GstAggregator    *  aggregate,
+                                   GstAggregatorPad *  bpad,
+                                   GstQuery         *  query);
 
   /* srcpad virtual methods */
-  gboolean      (*src_event) (GstAggregator *aggregate, GstEvent *event);
-  gboolean      (*src_query) (GstAggregator *aggregate, GstQuery *query);
-  gboolean      (*src_activate)  (GstAggregator *aggregator, GstPadMode mode, gboolean active);
+  gboolean      (*src_event)      (GstAggregator    *  aggregate,
+                                   GstEvent         *  event);
 
-  GstFlowReturn (*aggregate) (GstAggregator *aggregator);
+  gboolean      (*src_query)      (GstAggregator    *  aggregate,
+                                   GstQuery         *  query);
+
+  gboolean      (*src_activate)   (GstAggregator    *  aggregator,
+                                   GstPadMode          mode,
+                                   gboolean            active);
+
+  GstFlowReturn (*aggregate)      (GstAggregator    *  aggregator);
 
   /* Should be linked up first */
-  gboolean      (*stop)           (GstAggregator *aggregator);
-  gboolean      (*start)          (GstAggregator *aggregator);
+  gboolean      (*stop)           (GstAggregator    *  aggregator);
+
+  gboolean      (*start)          (GstAggregator    *  aggregator);
 
   /*< private >*/
   gpointer _gst_reserved[GST_PADDING];
@@ -168,15 +183,20 @@ struct _GstAggregatorClass {
  * GstAggregator methods *
  ************************/
 
-GstFlowReturn  gst_aggregator_finish_buffer   (GstAggregator * agg, GstBuffer *buf);
-void           gst_aggregator_set_src_caps    (GstAggregator * agg, GstCaps * caps);
+GstFlowReturn  gst_aggregator_finish_buffer         (GstAggregator                *  agg,
+                                                     GstBuffer                    *  buf);
+void           gst_aggregator_set_src_caps          (GstAggregator                *  agg,
+                                                     GstCaps                      *  caps);
 
 GType gst_aggregator_get_type(void);
 
 /* API that should eventually land in GstElement itself*/
-typedef gboolean (*GstAggregatorPadForeachFunc)    (GstAggregator * self, GstPad * pad, gpointer userggregator_iterate_sinkpads_data);
-gboolean gst_aggregator_iterate_sinkpads           (GstAggregator * self, GstAggregatorPadForeachFunc func,
-                                                    gpointer user_data);
+typedef gboolean (*GstAggregatorPadForeachFunc)    (GstAggregator                 *  self,
+                                                    GstPad                        *  pad,
+                                                    gpointer                         user_data);
+gboolean gst_aggregator_iterate_sinkpads           (GstAggregator                 *  self,
+                                                    GstAggregatorPadForeachFunc      func,
+                                                    gpointer                         user_data);
 
 
 G_END_DECLS
