@@ -214,12 +214,40 @@ gst_videoaggregator_child_proxy_init (gpointer g_iface, gpointer iface_data)
  **************************************/
 
 #define GST_VIDEO_AGGREGATOR_GET_LOCK(vagg) (&GST_VIDEO_AGGREGATOR(vagg)->priv->lock)
-#define GST_VIDEO_AGGREGATOR_LOCK(vagg)     (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
-#define GST_VIDEO_AGGREGATOR_UNLOCK(vagg)   (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
+
+#define GST_VIDEO_AGGREGATOR_LOCK(vagg)   G_STMT_START {       \
+  GST_LOG_OBJECT (vagg, "Taking EVENT lock from thread %p",    \
+        g_thread_self());                                      \
+  g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_LOCK(vagg));           \
+  GST_LOG_OBJECT (vagg, "Took EVENT lock from thread %p",      \
+        g_thread_self());                                      \
+  } G_STMT_END
+
+#define GST_VIDEO_AGGREGATOR_UNLOCK(vagg)   G_STMT_START {     \
+  GST_LOG_OBJECT (vagg, "Releasing EVENT lock from thread %p", \
+        g_thread_self());                                      \
+  g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_LOCK(vagg));         \
+  GST_LOG_OBJECT (vagg, "Took EVENT lock from thread %p",      \
+        g_thread_self());                                      \
+  } G_STMT_END
+
 
 #define GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg) (&GST_VIDEO_AGGREGATOR(vagg)->priv->setcaps_lock)
-#define GST_VIDEO_AGGREGATOR_SETCAPS_LOCK(vagg)     (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
-#define GST_VIDEO_AGGREGATOR_SETCAPS_UNLOCK(vagg)   (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
+#define GST_VIDEO_AGGREGATOR_SETCAPS_LOCK(vagg)   G_STMT_START {  \
+  GST_LOG_OBJECT (vagg, "Taking SETCAPS lock from thread %p",     \
+        g_thread_self());                                         \
+  g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg));      \
+  GST_LOG_OBJECT (vagg, "Took SETCAPS lock from thread %p",       \
+        g_thread_self());                                         \
+  } G_STMT_END
+
+#define GST_VIDEO_AGGREGATOR_SETCAPS_UNLOCK(vagg)   G_STMT_START {  \
+  GST_LOG_OBJECT (vagg, "Releasing SETCAPS lock from thread %p",    \
+        g_thread_self());                                           \
+  g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg));      \
+  GST_LOG_OBJECT (vagg, "Took SETCAPS lock from thread %p",         \
+        g_thread_self());                                           \
+  } G_STMT_END
 
 struct _GstVideoAggregatorPrivate
 {
@@ -1232,7 +1260,7 @@ done_unlocked:
  *
  * We don't do synchronized aggregating so this really depends on where the
  * streams where punched in and what their relative offsets are against
- * eachother which we can get from the first timestamps we see.
+ * each other which we can get from the first timestamps we see.
  *
  * When we add a new stream (or remove a stream) the duration might
  * also become invalid again and we need to post a new DURATION
@@ -1524,9 +1552,7 @@ gst_videoaggregator_flush (GstAggregator * agg)
   gdouble abs_rate;
   GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (agg);
 
-  GST_ERROR ("=== FLUSHING");
-
-  GST_ERROR ("=== HERE");
+  GST_INFO_OBJECT (agg, "Flushing");
   abs_rate = ABS (agg->segment.rate);
   GST_OBJECT_LOCK (vagg);
   for (l = GST_ELEMENT (vagg)->sinkpads; l; l = l->next) {
