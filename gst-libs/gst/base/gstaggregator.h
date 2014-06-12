@@ -63,14 +63,14 @@ typedef struct _GstAggregatorPadPrivate GstAggregatorPadPrivate;
  */
 struct _GstAggregatorPad
 {
-  GstPad        parent;
+  GstPad                       parent;
 
-  GstBuffer     *buffer;
-  GstSegment    segment;
-  gboolean      eos;
+  GstBuffer                 *  buffer;
+  GstSegment                   segment;
+  gboolean                     eos;
 
   /* < Private > */
-  GstAggregatorPadPrivate *priv;
+  GstAggregatorPadPrivate   *  priv;
 
   gpointer _gst_reserved[GST_PADDING];
 };
@@ -85,12 +85,12 @@ struct _GstAggregatorPad
  */           
 struct _GstAggregatorPadClass
 {
-  GstPadClass parent_class;
+  GstPadClass   parent_class;
 
   GstFlowReturn (*flush)     (GstAggregatorPad * aggpad, GstAggregator * aggregator);
 
   /*< private >*/
-  gpointer _gst_reserved[GST_PADDING];
+  gpointer      _gst_reserved[GST_PADDING];
 };
 
 GType gst_aggregator_pad_get_type           (void);
@@ -115,7 +115,7 @@ GstAggregatorPad * gst_aggregator_pad_new   (void);
 #define GST_IS_AGGREGATOR(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_AGGREGATOR))
 #define GST_IS_AGGREGATOR_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_AGGREGATOR))
 
-#define GST_FLOW_CUSTOM_SUCCESS GST_FLOW_NOT_HANDLED
+#define GST_FLOW_CUSTOM_SUCCESS        GST_FLOW_NOT_HANDLED
 
 /**
  * GstAggregator:
@@ -124,16 +124,16 @@ GstAggregatorPad * gst_aggregator_pad_new   (void);
  * Collectpads object.
  */
 struct _GstAggregator {
-  GstElement      parent;
+  GstElement               parent;
 
-  GstPad *srcpad;
-  GstSegment segment;
+  GstPad                *  srcpad;
+
+  GstSegment               segment;
 
   /*< private >*/
-  GstAggregatorPrivate *priv;
+  GstAggregatorPrivate  *  priv;
 
-
-  gpointer _gst_reserved[GST_PADDING];
+  gpointer                 _gst_reserved[GST_PADDING];
 };
 
 /*
@@ -188,46 +188,45 @@ struct _GstAggregator {
  * _finish_buffer from inside that function.
  */
 struct _GstAggregatorClass {
-  GstElementClass parent_class;
+  GstElementClass   parent_class;
 
-  GType sinkpads_type;
+  GType             sinkpads_type;
 
-  GstFlowReturn (*flush)          (GstAggregator    *  aggregator);
+  GstFlowReturn     (*flush)          (GstAggregator    *  aggregator);
 
-  GstFlowReturn (*clip)           (GstAggregator    *  agg,
-                                   GstAggregatorPad *  bpad,
-                                   GstBuffer        *  buf,
-                                   GstBuffer        ** outbuf);
+  GstFlowReturn     (*clip)           (GstAggregator    *  agg,
+                                       GstAggregatorPad *  bpad,
+                                       GstBuffer        *  buf,
+                                       GstBuffer        ** outbuf);
 
   /* sinkpads virtual methods */
-  gboolean      (*sink_event)     (GstAggregator    *  aggregate,
-                                   GstAggregatorPad *  bpad,
-                                   GstEvent         *  event);
+  gboolean          (*sink_event)     (GstAggregator    *  aggregate,
+                                       GstAggregatorPad *  bpad,
+                                       GstEvent         *  event);
 
-  gboolean      (*sink_query)     (GstAggregator    *  aggregate,
-                                   GstAggregatorPad *  bpad,
-                                   GstQuery         *  query);
+  gboolean          (*sink_query)     (GstAggregator    *  aggregate,
+                                       GstAggregatorPad *  bpad,
+                                       GstQuery         *  query);
 
   /* srcpad virtual methods */
-  gboolean      (*src_event)      (GstAggregator    *  aggregate,
-                                   GstEvent         *  event);
+  gboolean          (*src_event)      (GstAggregator    *  aggregate,
+                                       GstEvent         *  event);
 
-  gboolean      (*src_query)      (GstAggregator    *  aggregate,
-                                   GstQuery         *  query);
+  gboolean          (*src_query)      (GstAggregator    *  aggregate,
+                                       GstQuery         *  query);
 
-  gboolean      (*src_activate)   (GstAggregator    *  aggregator,
-                                   GstPadMode          mode,
-                                   gboolean            active);
+  gboolean          (*src_activate)   (GstAggregator    *  aggregator,
+                                       GstPadMode          mode,
+                                       gboolean            active);
 
-  GstFlowReturn (*aggregate)      (GstAggregator    *  aggregator);
+  GstFlowReturn     (*aggregate)      (GstAggregator    *  aggregator);
 
-  /* Should be linked up first */
-  gboolean      (*stop)           (GstAggregator    *  aggregator);
+  gboolean          (*stop)           (GstAggregator    *  aggregator);
 
-  gboolean      (*start)          (GstAggregator    *  aggregator);
+  gboolean          (*start)          (GstAggregator    *  aggregator);
 
   /*< private >*/
-  gpointer _gst_reserved[GST_PADDING];
+  gpointer          _gst_reserved[GST_PADDING];
 };
 
 /*************************
