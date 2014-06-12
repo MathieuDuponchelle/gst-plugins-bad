@@ -560,8 +560,7 @@ gst_compositor_class_init (GstCompositorClass * klass)
   gobject_class->set_property = gst_compositor_set_property;
 
   agg_class->sinkpads_type = GST_TYPE_COMPOSITOR_PAD;
-  videoaggregator_class->modify_src_pad_info =
-      gst_compositor_modify_src_pad_info;
+  videoaggregator_class->update_src_info = gst_compositor_modify_src_pad_info;
   videoaggregator_class->aggregate_frames = gst_compositor_aggregate_frames;
 
   g_object_class_install_property (gobject_class, PROP_BACKGROUND,
