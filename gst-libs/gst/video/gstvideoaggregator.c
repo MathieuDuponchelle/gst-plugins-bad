@@ -796,11 +796,7 @@ gst_videoaggregator_reset (GstVideoAggregator * vagg)
   GST_OBJECT_UNLOCK (vagg);
 }
 
-/*  1 == OK
- *  0 == need more data
- * -1 == EOS
- * -2 == error
- */
+#define GST_FLOW_NEEDS_DATA GST_FLOW_CUSTOM_ERROR
 static gint
 gst_videoaggregator_fill_queues (GstVideoAggregator * vagg,
     GstClockTime output_start_time, GstClockTime output_end_time)
@@ -831,7 +827,7 @@ gst_videoaggregator_fill_queues (GstVideoAggregator * vagg,
         gst_buffer_unref (buf);
         GST_DEBUG_OBJECT (pad, "Need timestamped buffers!");
         GST_OBJECT_UNLOCK (vagg);
-        return -2;
+        return GST_FLOW_ERROR;
       }
 
       vinfo = &pad->info;
@@ -978,11 +974,11 @@ gst_videoaggregator_fill_queues (GstVideoAggregator * vagg,
   GST_OBJECT_UNLOCK (vagg);
 
   if (need_more_data)
-    return 0;
+    return GST_FLOW_NEEDS_DATA;
   if (eos)
-    return -1;
+    return GST_FLOW_EOS;
 
-  return 1;
+  return GST_FLOW_OK;
 }
 
 static gboolean
@@ -1191,17 +1187,17 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
       gst_videoaggregator_fill_queues (vagg, output_start_time,
       output_end_time);
 
-  if (res == 0) {
+  if (res == GST_FLOW_NEEDS_DATA) {
     GST_DEBUG_OBJECT (vagg, "Need more data for decisions");
     ret = GST_FLOW_OK;
     goto done;
-  } else if (res == -1) {
+  } else if (res == GST_FLOW_EOS) {
     GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
     GST_DEBUG_OBJECT (vagg, "All sinkpads are EOS -- forwarding");
     ret = GST_FLOW_EOS;
     goto done_unlocked;
-  } else if (res == -2) {
-    GST_DEBUG_OBJECT (vagg, "Error collecting buffers");
+  } else if (res == GST_FLOW_ERROR) {
+    GST_WARNING_OBJECT (vagg, "Error collecting buffers");
     ret = GST_FLOW_ERROR;
     goto done;
   }
