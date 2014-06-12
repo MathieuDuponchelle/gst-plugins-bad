@@ -1,6 +1,6 @@
 /* GStreamer
  * Copyright (C) 2014 Mathieu Duponchelle <mathieu.duponchelle@oencreed.com>
- * Copyright (C) 2014 Thibault Saunier <tsaunier@opencreed.com>
+ * Copyright (C) 2014 Thibault Saunier <tsaunier@gnome.org>
  *
  * gstcollectpads.c:
  *
@@ -101,8 +101,6 @@ GType gst_aggregator_pad_get_type           (void);
 
 GstBuffer * gst_aggregator_pad_steal_buffer (GstAggregatorPad *  pad);
 GstBuffer * gst_aggregator_pad_get_buffer   (GstAggregatorPad *  pad);
-
-GstAggregatorPad * gst_aggregator_pad_new   (void);
 
 /*********************
  * GstAggregator API *

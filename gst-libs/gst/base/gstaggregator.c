@@ -28,6 +28,7 @@
 
 #include "gstaggregator.h"
 
+
 /*  Might become API */
 static void gst_aggregator_merge_tags (GstAggregator * aggregator,
     const GstTagList * tags, GstTagMergeMode mode);
@@ -1198,12 +1199,6 @@ gst_aggregator_pad_init (GstAggregatorPad * pad)
   g_mutex_init (&pad->priv->event_lock);
   g_cond_init (&pad->priv->event_cond);
 
-}
-
-GstAggregatorPad *
-gst_aggregator_pad_new (void)
-{
-  return g_object_new (GST_TYPE_AGGREGATOR_PAD, NULL);
 }
 
 /**
