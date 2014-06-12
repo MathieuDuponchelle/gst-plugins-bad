@@ -70,6 +70,14 @@ struct _GstAggregatorPad
   gpointer _gst_reserved[GST_PADDING];
 };
 
+/*
+ * GstAggregatorPadClass:
+ * @flush:    Optional
+ *            Called when the pad has received a flush stop, this is the place
+ *            to flush any information specific to the pad, it allows for individual
+ *            pads to be flushed while others might not be.
+ * 
+ */           
 struct _GstAggregatorPadClass
 {
   GstPadClass parent_class;
