@@ -63,7 +63,6 @@ struct _GstAggregatorPad
   GstBuffer     *buffer;
   GstSegment    segment;
   gboolean      eos;
-  gboolean      flushing;
 
   /* < Private > */
   GstAggregatorPadPrivate *priv;

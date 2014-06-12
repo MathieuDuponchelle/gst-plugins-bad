@@ -73,6 +73,7 @@ struct _GstAggregatorPadPrivate
   gboolean pending_flush_start;
   gboolean pending_flush_stop;
   gboolean pending_eos;
+  gboolean flushing;
 
   GMutex event_lock;
   GCond event_cond;
@@ -84,7 +85,7 @@ _aggpad_flush (GstAggregatorPad * aggpad, GstAggregator * agg)
   GstAggregatorPadClass *klass = GST_AGGREGATOR_PAD_GET_CLASS (aggpad);
 
   aggpad->eos = FALSE;
-  aggpad->flushing = FALSE;
+  aggpad->priv->flushing = FALSE;
 
   if (klass->flush)
     return klass->flush (aggpad, agg);
@@ -480,7 +481,7 @@ _sink_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
     {
       GstBuffer *tmpbuf;
 
-      g_atomic_int_set (&aggpad->flushing, TRUE);
+      g_atomic_int_set (&aggpad->priv->flushing, TRUE);
       /*  Remove pad buffer and wake up the streaming thread */
       tmpbuf = gst_aggregator_pad_steal_buffer (aggpad);
       gst_buffer_replace (&tmpbuf, NULL);
@@ -668,7 +669,7 @@ _release_pad (GstElement * element, GstPad * pad)
 
   GST_INFO_OBJECT (pad, "Removing pad");
 
-  g_atomic_int_set (&aggpad->flushing, TRUE);
+  g_atomic_int_set (&aggpad->priv->flushing, TRUE);
   tmpbuf = gst_aggregator_pad_steal_buffer (aggpad);
   gst_buffer_replace (&tmpbuf, NULL);
   gst_element_remove_pad (element, pad);
@@ -1064,7 +1065,7 @@ _chain (GstPad * pad, GstObject * object, GstBuffer * buffer)
 
   GST_DEBUG_OBJECT (aggpad, "Start chaining a buffer %" GST_PTR_FORMAT, buffer);
 
-  if (g_atomic_int_get (&aggpad->flushing) == TRUE)
+  if (g_atomic_int_get (&aggpad->priv->flushing) == TRUE)
     goto flushing;
 
   if (g_atomic_int_get (&aggpad->priv->pending_eos) == TRUE)
@@ -1077,7 +1078,7 @@ _chain (GstPad * pad, GstObject * object, GstBuffer * buffer)
   }
   PAD_UNLOCK_EVENT (aggpad);
 
-  if (g_atomic_int_get (&aggpad->flushing) == TRUE)
+  if (g_atomic_int_get (&aggpad->priv->flushing) == TRUE)
     goto flushing;
 
 
@@ -1136,12 +1137,12 @@ pad_activate_mode_func (GstPad * pad,
 
   if (active == FALSE) {
     PAD_LOCK_EVENT (aggpad);
-    g_atomic_int_set (&aggpad->flushing, TRUE);
+    g_atomic_int_set (&aggpad->priv->flushing, TRUE);
     gst_buffer_replace (&aggpad->buffer, NULL);
     PAD_BROADCAST_EVENT (aggpad);
     PAD_UNLOCK_EVENT (aggpad);
   } else {
-    g_atomic_int_set (&aggpad->flushing, FALSE);
+    g_atomic_int_set (&aggpad->priv->flushing, FALSE);
     PAD_LOCK_EVENT (aggpad);
     PAD_BROADCAST_EVENT (aggpad);
     PAD_UNLOCK_EVENT (aggpad);
