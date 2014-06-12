@@ -54,6 +54,7 @@ struct _GstVideoAggregator
 {
   GstAggregator aggregator;
 
+  /*< public >*/
   /* Output caps */
   GstVideoInfo info;
 
@@ -62,36 +63,34 @@ struct _GstVideoAggregator
 };
 
 /**
+ * GstVideoAggregatorClass:
  * @disable_frame_conversion: Optional.
  *                            Allows subclasses to disable the frame colorspace
  *                            conversion feature
- *
  * @update_info:              Optional.
  *                            Lets subclasses update the src #GstVideoInfo representing
  *                            the src pad caps before usage.
- *
- * @aggregate_frames:         Optional.
- *                            Lets subclasses aggregate frames that are ready. Subclasses
+ * @aggregate_frames:         Lets subclasses aggregate frames that are ready. Subclasses
  *                            should iterate the GstElement.sinkpads and use the already
  *                            mapped #GstVideoFrame from GstVideoAggregatorPad.aggregated_frame
  *                            or directly use the #GstBuffer from GstVideoAggregatorPad.buffer
  *                            if it needs to map the buffer in a special way. The result of the
  *                            aggregation should land in @outbuffer.
- *
  * @get_output_buffer:        Optional.
  *                            Lets subclasses provide a #GstBuffer to be used as @outbuffer of
  *                            the #aggregate_frames vmethod.
- *
  * @negotiated_caps:          Optional.
  *                            Notifies subclasses what caps format has been negotiated
  **/
 struct _GstVideoAggregatorClass
 {
+  /*< private >*/
   GstAggregatorClass parent_class;
 
+  /*< public >*/
   gboolean           disable_frame_conversion;
 
-  gboolean			 (*update_info)               (GstVideoAggregator *  videoaggregator,
+  gboolean           (*update_info)               (GstVideoAggregator *  videoaggregator,
                                                    GstVideoInfo       *  info);
   GstFlowReturn      (*aggregate_frames)          (GstVideoAggregator *  videoaggregator,
                                                    GstBuffer          *  outbuffer);

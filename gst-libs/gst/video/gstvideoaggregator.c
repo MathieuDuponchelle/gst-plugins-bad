@@ -1612,8 +1612,7 @@ gst_videoaggregator_sink_event (GstAggregator * agg, GstAggregatorPad * bpad,
   }
 
   if (event != NULL)
-    return
-        GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_event
+    return GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->sink_event
         (agg, bpad, event);
 
   return ret;

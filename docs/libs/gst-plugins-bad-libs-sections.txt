@@ -1290,3 +1290,19 @@ gst_gl_window_x11_get_type
 GstGLWindowX11Private
 x11_event_source_new
 </SECTION>
+
+<SECTION>
+<FILE>gstvideoaggregator</FILE>
+<TITLE>GstVideoAggregator</TITLE>
+GstVideoAggregator
+GstVideoAggregatorClass
+<SUBSECTION Standard>
+GST_IS_VIDEO_AGGREGATOR
+GST_IS_VIDEO_AGGREGATOR_CLASS
+GST_TYPE_VIDEO_AGGREGATOR
+GST_VIDEO_AGGREGATOR
+GST_VIDEO_AGGREGATOR_CLASS
+GST_VIDEO_AGGREGATOR_GET_CLASS
+gst_videoaggregator_get_type
+GstVideoAggregatorPrivate
+</SECTION>
