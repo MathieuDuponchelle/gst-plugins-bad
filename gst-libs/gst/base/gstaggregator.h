@@ -27,16 +27,17 @@
 
 G_BEGIN_DECLS
 
-/******************************
+/**************************
  * GstAggregator Structs  *
- ******************************/
+ *************************/
+
 typedef struct _GstAggregator GstAggregator;
 typedef struct _GstAggregatorPrivate GstAggregatorPrivate;
 typedef struct _GstAggregatorClass GstAggregatorClass;
 
-/**********************
- * GstAggregatorPad API   *
- *********************/
+/************************
+ * GstAggregatorPad API *
+ ***********************/
 
 #define GST_TYPE_AGGREGATOR_PAD            (gst_aggregator_pad_get_type())
 #define GST_AGGREGATOR_PAD(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_AGGREGATOR_PAD, GstAggregatorPad))
@@ -44,6 +45,10 @@ typedef struct _GstAggregatorClass GstAggregatorClass;
 #define GST_AGGREGATOR_PAD_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS ((obj),GST_TYPE_AGGREGATOR_PAD, GstAggregatorPadClass))
 #define GST_IS_AGGREGATOR_PAD(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_AGGREGATOR_PAD))
 #define GST_IS_AGGREGATOR_PAD_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_AGGREGATOR_PAD))
+
+/****************************
+ * GstAggregatorPad Structs *
+ ***************************/
 
 typedef struct _GstAggregatorPad GstAggregatorPad;
 typedef struct _GstAggregatorPadClass GstAggregatorPadClass;
@@ -89,14 +94,19 @@ struct _GstAggregatorPadClass
 };
 
 GType gst_aggregator_pad_get_type(void);
+
+/****************************
+ * GstAggregatorPad methods *
+ ***************************/
+
 GstBuffer * gst_aggregator_pad_steal_buffer (GstAggregatorPad *pad);
 GstBuffer * gst_aggregator_pad_get_buffer (GstAggregatorPad *pad);
 
 GstAggregatorPad * gst_aggregator_pad_new     (void);
 
-/**********************
- * GstAggregator API   *
- *********************/
+/*********************
+ * GstAggregator API *
+ ********************/
 
 #define GST_TYPE_AGGREGATOR            (gst_aggregator_get_type())
 #define GST_AGGREGATOR(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_AGGREGATOR,GstAggregator))
@@ -153,6 +163,10 @@ struct _GstAggregatorClass {
   /*< private >*/
   gpointer _gst_reserved[GST_PADDING];
 };
+
+/*************************
+ * GstAggregator methods *
+ ************************/
 
 GstFlowReturn  gst_aggregator_finish_buffer   (GstAggregator * agg, GstBuffer *buf);
 void           gst_aggregator_set_src_caps    (GstAggregator * agg, GstCaps * caps);
