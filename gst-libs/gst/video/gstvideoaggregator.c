@@ -48,13 +48,13 @@ GST_DEBUG_CATEGORY_STATIC (gst_videoaggregator_debug);
 #define GST_CAT_DEFAULT gst_videoaggregator_debug
 
 #define GST_VIDEO_AGGREGATOR_GET_LOCK(vagg) \
-  (&GST_VIDEO_AGGREGATOR(vagg)->lock)
+  (&GST_VIDEO_AGGREGATOR(vagg)->priv->lock)
 #define GST_VIDEO_AGGREGATOR_LOCK(vagg) \
   (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
 #define GST_VIDEO_AGGREGATOR_UNLOCK(vagg) \
   (g_mutex_unlock(GST_VIDEO_AGGREGATOR_GET_LOCK (vagg)))
 #define GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK(vagg) \
-  (&GST_VIDEO_AGGREGATOR(vagg)->setcaps_lock)
+  (&GST_VIDEO_AGGREGATOR(vagg)->priv->setcaps_lock)
 #define GST_VIDEO_AGGREGATOR_SETCAPS_LOCK(vagg) \
   (g_mutex_lock(GST_VIDEO_AGGREGATOR_GET_SETCAPS_LOCK (vagg)))
 #define GST_VIDEO_AGGREGATOR_SETCAPS_UNLOCK(vagg) \
@@ -66,25 +66,33 @@ static void gst_videoaggregator_release_pad (GstElement * element,
     GstPad * pad);
 static void gst_videoaggregator_reset_qos (GstVideoAggregator * vagg);
 
-struct _GstVideoAggregatorCollect
-{
-  GstVideoAggregatorPad *vaggpad;
-
-  GstBuffer *queued;            /* buffer for which we don't know the end time yet */
-  GstVideoInfo queued_vinfo;
-
-  GstBuffer *buffer;            /* buffer that should be blended now */
-  GstVideoInfo buffer_vinfo;
-
-  GstClockTime start_time;
-  GstClockTime end_time;
-};
-
 #define DEFAULT_PAD_ZORDER 0
 enum
 {
   PROP_PAD_0,
   PROP_PAD_ZORDER,
+};
+
+struct _GstVideoAggregatorPrivate
+{
+  /* Lock to prevent the state to change while aggregating */
+  GMutex lock;
+
+  /* Lock to prevent two src setcaps from happening at the same time  */
+  GMutex setcaps_lock;
+
+  /* Current downstream segment */
+  GstClockTime ts_offset;
+  guint64 nframes;
+
+  /* QoS stuff */
+  gdouble proportion;
+  GstClockTime earliest_time;
+  guint64 qos_processed, qos_dropped;
+
+  /* current caps */
+  GstCaps *current_caps;
+  gboolean send_caps;
 };
 
 G_DEFINE_TYPE (GstVideoAggregatorPad, gst_videoaggregator_pad,
@@ -94,13 +102,48 @@ G_DEFINE_ABSTRACT_TYPE_WITH_CODE (GstVideoAggregator, gst_videoaggregator,
         gst_videoaggregator_child_proxy_init));
 
 static gboolean
-gst_videoaggregator_update_src_caps (GstVideoAggregator * vagg)
+gst_videoaggregator_src_setcaps (GstVideoAggregator * vagg, GstCaps * caps)
 {
-  return GST_VIDEO_AGGREGATOR_GET_CLASS (vagg)->update_src_caps (vagg);
+  GstAggregator *agg = GST_AGGREGATOR (vagg);
+  gboolean ret = FALSE;
+  GstVideoInfo info;
+
+  GstPad *pad = GST_AGGREGATOR (vagg)->srcpad;
+
+  GST_INFO_OBJECT (pad, "set src caps: %" GST_PTR_FORMAT, caps);
+
+  if (!gst_video_info_from_caps (&info, caps))
+    goto done;
+
+  ret = TRUE;
+
+  GST_VIDEO_AGGREGATOR_LOCK (vagg);
+
+  if (GST_VIDEO_INFO_FPS_N (&vagg->info) != GST_VIDEO_INFO_FPS_N (&info) ||
+      GST_VIDEO_INFO_FPS_D (&vagg->info) != GST_VIDEO_INFO_FPS_D (&info)) {
+    if (agg->segment.position != -1) {
+      vagg->priv->ts_offset = agg->segment.position - agg->segment.start;
+      vagg->priv->nframes = 0;
+    }
+    gst_videoaggregator_reset_qos (vagg);
+  }
+
+  vagg->info = info;
+
+  GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
+
+  if (vagg->priv->current_caps == NULL ||
+      gst_caps_is_equal (caps, vagg->priv->current_caps) == FALSE) {
+    gst_caps_replace (&vagg->priv->current_caps, caps);
+    vagg->priv->send_caps = TRUE;
+  }
+
+done:
+  return ret;
 }
 
 static gboolean
-_update_src_caps (GstVideoAggregator * vagg)
+gst_videoaggregator_update_src_caps (GstVideoAggregator * vagg)
 {
   GList *l;
   gint best_width = -1, best_height = -1;
@@ -163,8 +206,8 @@ _update_src_caps (GstVideoAggregator * vagg)
     if (GST_VIDEO_INFO_FPS_N (&vagg->info) != best_fps_n ||
         GST_VIDEO_INFO_FPS_D (&vagg->info) != best_fps_d) {
       if (agg->segment.position != -1) {
-        vagg->ts_offset = agg->segment.position - agg->segment.start;
-        vagg->nframes = 0;
+        vagg->priv->ts_offset = agg->segment.position - agg->segment.start;
+        vagg->priv->nframes = 0;
       }
     }
     gst_video_info_init (&info);
@@ -175,8 +218,8 @@ _update_src_caps (GstVideoAggregator * vagg)
     info.par_n = GST_VIDEO_INFO_PAR_N (&vagg->info);
     info.par_d = GST_VIDEO_INFO_PAR_D (&vagg->info);
 
-    if (vagg_klass->modify_src_pad_info) {
-      if (!vagg_klass->modify_src_pad_info (vagg, &info)) {
+    if (vagg_klass->update_src_info) {
+      if (!vagg_klass->update_src_info (vagg, &info)) {
         ret = FALSE;
         GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
         goto done;
@@ -223,7 +266,11 @@ _update_src_caps (GstVideoAggregator * vagg)
 
     GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
     GST_OBJECT_UNLOCK (vagg);
-    ret = gst_videoaggregator_src_setcaps (vagg, caps);
+
+    if (gst_videoaggregator_src_setcaps (vagg, caps)) {
+      if (vagg_klass->negotiated)
+        ret = GST_VIDEO_AGGREGATOR_GET_CLASS (vagg)->negotiated (vagg, caps);
+    }
     gst_caps_unref (caps);
   } else {
     GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
@@ -328,16 +375,11 @@ gst_videoaggregator_update_converters (GstVideoAggregator * vagg)
 
   downstream_caps = gst_pad_get_allowed_caps (agg->srcpad);
 
-  if (vagg_klass->get_preferred_input_caps) {
-    GstCaps *preferred_caps = vagg_klass->get_preferred_input_caps (vagg);
-    downstream_caps = gst_caps_intersect (downstream_caps, preferred_caps);
-  }
-
   if (!downstream_caps || gst_caps_is_empty (downstream_caps))
     return FALSE;
 
 
-  if (vagg_klass->disable_frame_convertion == FALSE)
+  if (vagg_klass->disable_frame_conversion == FALSE)
     _find_best_video_format (vagg, downstream_caps, &best_info, &best_format,
         &at_least_one_alpha);
 
@@ -440,7 +482,7 @@ gst_videoaggregator_pad_sink_setcaps (GstPad * pad, GstObject * parent,
         GST_VIDEO_INFO_INTERLACE_MODE (&info)) {
       GST_ERROR_OBJECT (pad,
           "got input caps %" GST_PTR_FORMAT ", but " "current caps are %"
-          GST_PTR_FORMAT, caps, vagg->current_caps);
+          GST_PTR_FORMAT, caps, vagg->priv->current_caps);
       GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
       return FALSE;
     }
@@ -716,17 +758,17 @@ gst_videoaggregator_update_qos (GstVideoAggregator * vagg, gdouble proportion,
       GST_TIME_ARGS (ABS (diff)), GST_TIME_ARGS (timestamp));
 
   GST_OBJECT_LOCK (vagg);
-  vagg->proportion = proportion;
+  vagg->priv->proportion = proportion;
   if (G_LIKELY (timestamp != GST_CLOCK_TIME_NONE)) {
     if (G_UNLIKELY (diff > 0))
-      vagg->earliest_time =
+      vagg->priv->earliest_time =
           timestamp + 2 * diff + gst_util_uint64_scale_int_round (GST_SECOND,
           GST_VIDEO_INFO_FPS_D (&vagg->info),
           GST_VIDEO_INFO_FPS_N (&vagg->info));
     else
-      vagg->earliest_time = timestamp + diff;
+      vagg->priv->earliest_time = timestamp + diff;
   } else {
-    vagg->earliest_time = GST_CLOCK_TIME_NONE;
+    vagg->priv->earliest_time = GST_CLOCK_TIME_NONE;
   }
   GST_OBJECT_UNLOCK (vagg);
 }
@@ -735,7 +777,7 @@ static void
 gst_videoaggregator_reset_qos (GstVideoAggregator * vagg)
 {
   gst_videoaggregator_update_qos (vagg, 0.5, 0, GST_CLOCK_TIME_NONE);
-  vagg->qos_processed = vagg->qos_dropped = 0;
+  vagg->priv->qos_processed = vagg->priv->qos_dropped = 0;
 }
 
 static void
@@ -743,8 +785,8 @@ gst_videoaggregator_read_qos (GstVideoAggregator * vagg, gdouble * proportion,
     GstClockTime * time)
 {
   GST_OBJECT_LOCK (vagg);
-  *proportion = vagg->proportion;
-  *time = vagg->earliest_time;
+  *proportion = vagg->priv->proportion;
+  *time = vagg->priv->earliest_time;
   GST_OBJECT_UNLOCK (vagg);
 }
 
@@ -755,8 +797,8 @@ gst_videoaggregator_reset (GstVideoAggregator * vagg)
   GList *l;
 
   gst_video_info_init (&vagg->info);
-  vagg->ts_offset = 0;
-  vagg->nframes = 0;
+  vagg->priv->ts_offset = 0;
+  vagg->priv->nframes = 0;
 
   gst_segment_init (&agg->segment, GST_FORMAT_TIME);
   agg->segment.position = -1;
@@ -1065,7 +1107,7 @@ gst_videoaggregator_blend_buffers (GstVideoAggregator * vagg,
   GST_BUFFER_TIMESTAMP (*outbuf) = output_start_time;
   GST_BUFFER_DURATION (*outbuf) = output_end_time - output_start_time;
 
-  if (vagg_klass->disable_frame_convertion == FALSE) {
+  if (vagg_klass->disable_frame_conversion == FALSE) {
     /* Here we convert all the frames the subclass will have to aggregate */
     gst_aggregator_iterate_sinkpads (GST_AGGREGATOR (vagg),
         (GstAggregatorPadForeachFunc) prepare_frames, NULL);
@@ -1139,9 +1181,9 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
   if (gst_pad_check_reconfigure (agg->srcpad))
     gst_videoaggregator_update_src_caps (vagg);
 
-  if (vagg->send_caps) {
-    gst_aggregator_set_src_caps (agg, vagg->current_caps);
-    vagg->send_caps = FALSE;
+  if (vagg->priv->send_caps) {
+    gst_aggregator_set_src_caps (agg, vagg->priv->current_caps);
+    vagg->priv->send_caps = FALSE;
   }
 
   GST_VIDEO_AGGREGATOR_LOCK (vagg);
@@ -1152,8 +1194,8 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
     output_start_time = agg->segment.position;
 
   output_end_time =
-      vagg->ts_offset + gst_util_uint64_scale_round (vagg->nframes + 1,
-      GST_SECOND * GST_VIDEO_INFO_FPS_D (&vagg->info),
+      vagg->priv->ts_offset + gst_util_uint64_scale_round (vagg->priv->nframes +
+      1, GST_SECOND * GST_VIDEO_INFO_FPS_D (&vagg->info),
       GST_VIDEO_INFO_FPS_N (&vagg->info)) + agg->segment.start;
 
   if (agg->segment.stop != -1)
@@ -1183,11 +1225,11 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
     ret =
         gst_videoaggregator_blend_buffers (vagg, output_start_time,
         output_end_time, &outbuf);
-    vagg->qos_processed++;
+    vagg->priv->qos_processed++;
   } else {
     GstMessage *msg;
 
-    vagg->qos_dropped++;
+    vagg->priv->qos_dropped++;
 
     /* TODO: live */
     msg =
@@ -1196,16 +1238,16 @@ gst_videoaggregator_aggregate (GstAggregator * agg)
             output_start_time), gst_segment_to_stream_time (&agg->segment,
             GST_FORMAT_TIME, output_start_time), output_start_time,
         output_end_time - output_start_time);
-    gst_message_set_qos_values (msg, jitter, vagg->proportion, 1000000);
-    gst_message_set_qos_stats (msg, GST_FORMAT_BUFFERS, vagg->qos_processed,
-        vagg->qos_dropped);
+    gst_message_set_qos_values (msg, jitter, vagg->priv->proportion, 1000000);
+    gst_message_set_qos_stats (msg, GST_FORMAT_BUFFERS,
+        vagg->priv->qos_processed, vagg->priv->qos_dropped);
     gst_element_post_message (GST_ELEMENT_CAST (vagg), msg);
 
     ret = GST_FLOW_OK;
   }
 
   agg->segment.position = output_end_time;
-  vagg->nframes++;
+  vagg->priv->nframes++;
 
   GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
   if (outbuf) {
@@ -1467,47 +1509,6 @@ gst_videoaggregator_src_event (GstAggregator * agg, GstEvent * event)
       event);
 }
 
-gboolean
-gst_videoaggregator_src_setcaps (GstVideoAggregator * vagg, GstCaps * caps)
-{
-  GstAggregator *agg = GST_AGGREGATOR (vagg);
-  gboolean ret = FALSE;
-  GstVideoInfo info;
-
-  GstPad *pad = GST_AGGREGATOR (vagg)->srcpad;
-
-  GST_INFO_OBJECT (pad, "set src caps: %" GST_PTR_FORMAT, caps);
-
-  if (!gst_video_info_from_caps (&info, caps))
-    goto done;
-
-  ret = TRUE;
-
-  GST_VIDEO_AGGREGATOR_LOCK (vagg);
-
-  if (GST_VIDEO_INFO_FPS_N (&vagg->info) != GST_VIDEO_INFO_FPS_N (&info) ||
-      GST_VIDEO_INFO_FPS_D (&vagg->info) != GST_VIDEO_INFO_FPS_D (&info)) {
-    if (agg->segment.position != -1) {
-      vagg->ts_offset = agg->segment.position - agg->segment.start;
-      vagg->nframes = 0;
-    }
-    gst_videoaggregator_reset_qos (vagg);
-  }
-
-  vagg->info = info;
-
-  GST_VIDEO_AGGREGATOR_UNLOCK (vagg);
-
-  if (vagg->current_caps == NULL ||
-      gst_caps_is_equal (caps, vagg->current_caps) == FALSE) {
-    gst_caps_replace (&vagg->current_caps, caps);
-    vagg->send_caps = TRUE;
-  }
-
-done:
-  return ret;
-}
-
 static GstFlowReturn
 gst_videoaggregator_sink_clip (GstAggregator * agg,
     GstAggregatorPad * bpad, GstBuffer * buf, GstBuffer ** outbuf)
@@ -1588,8 +1589,8 @@ gst_videoaggregator_flush (GstAggregator * agg)
   GST_OBJECT_UNLOCK (vagg);
 
   agg->segment.position = -1;
-  vagg->ts_offset = 0;
-  vagg->nframes = 0;
+  vagg->priv->ts_offset = 0;
+  vagg->priv->nframes = 0;
 
   gst_videoaggregator_reset_qos (vagg);
   return GST_FLOW_OK;
@@ -1646,10 +1647,9 @@ gst_videoaggregator_start (GstAggregator * agg)
   if (!GST_AGGREGATOR_CLASS (gst_videoaggregator_parent_class)->start (agg))
     return FALSE;
 
-  vagg->send_stream_start = TRUE;
-  vagg->send_caps = TRUE;
+  vagg->priv->send_caps = TRUE;
   gst_segment_init (&agg->segment, GST_FORMAT_TIME);
-  gst_caps_replace (&vagg->current_caps, NULL);
+  gst_caps_replace (&vagg->priv->current_caps, NULL);
 
   return TRUE;
 }
@@ -1750,8 +1750,8 @@ gst_videoaggregator_finalize (GObject * o)
 {
   GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (o);
 
-  g_mutex_clear (&vagg->lock);
-  g_mutex_clear (&vagg->setcaps_lock);
+  g_mutex_clear (&vagg->priv->lock);
+  g_mutex_clear (&vagg->priv->setcaps_lock);
 
   G_OBJECT_CLASS (gst_videoaggregator_parent_class)->finalize (o);
 }
@@ -1761,7 +1761,7 @@ gst_videoaggregator_dispose (GObject * o)
 {
   GstVideoAggregator *vagg = GST_VIDEO_AGGREGATOR (o);
 
-  gst_caps_replace (&vagg->current_caps, NULL);
+  gst_caps_replace (&vagg->priv->current_caps, NULL);
 }
 
 static void
@@ -1839,6 +1839,8 @@ gst_videoaggregator_class_init (GstVideoAggregatorClass * klass)
   GST_DEBUG_CATEGORY_INIT (gst_videoaggregator_debug, "videoaggregator", 0,
       "base video aggregator");
 
+  g_type_class_add_private (klass, sizeof (GstVideoAggregatorPrivate));
+
   gobject_class->finalize = gst_videoaggregator_finalize;
   gobject_class->dispose = gst_videoaggregator_dispose;
 
@@ -1870,7 +1872,6 @@ gst_videoaggregator_class_init (GstVideoAggregatorClass * klass)
   agg_class->src_query = gst_videoaggregator_src_query;
 
   klass->get_output_buffer = gst_videoaggregator_get_output_buffer;
-  klass->update_src_caps = _update_src_caps;
 
   /* Register the pad class */
   g_type_class_ref (GST_TYPE_VIDEO_AGGREGATOR_PAD);
@@ -1879,10 +1880,14 @@ gst_videoaggregator_class_init (GstVideoAggregatorClass * klass)
 static void
 gst_videoaggregator_init (GstVideoAggregator * vagg)
 {
-  vagg->current_caps = NULL;
+  vagg->priv =
+      G_TYPE_INSTANCE_GET_PRIVATE (vagg, GST_TYPE_VIDEO_AGGREGATOR,
+      GstVideoAggregatorPrivate);
 
-  g_mutex_init (&vagg->lock);
-  g_mutex_init (&vagg->setcaps_lock);
+  vagg->priv->current_caps = NULL;
+
+  g_mutex_init (&vagg->priv->lock);
+  g_mutex_init (&vagg->priv->setcaps_lock);
   /* initialize variables */
   gst_videoaggregator_reset (vagg);
 }

@@ -43,65 +43,55 @@ G_BEGIN_DECLS
 
 typedef struct _GstVideoAggregator GstVideoAggregator;
 typedef struct _GstVideoAggregatorClass GstVideoAggregatorClass;
+typedef struct _GstVideoAggregatorPrivate GstVideoAggregatorPrivate;
 
 /**
  * GstVideoAggregator:
- *
- * The opaque #GstVideoAggregator structure.
+ * @info: The #GstVideoInfo representing the currently set
+ * srcpad caps.
  */
 struct _GstVideoAggregator
 {
   GstAggregator aggregator;
 
-  /* < private > */
-
-  /* pad */
-  GstPad *srcpad;
-
-  /* Lock to prevent the state to change while aggregating */
-  GMutex lock;
-
-  /* Lock to prevent two src setcaps from happening at the same time  */
-  GMutex setcaps_lock;
-
   /* Output caps */
   GstVideoInfo info;
 
-  /* current caps */
-  GstCaps *current_caps;
-  gboolean send_caps;
-
-  /* Current downstream segment */
-  GstSegment segment;
-  GstClockTime ts_offset;
-  guint64 nframes;
-
-  /* QoS stuff */
-  gdouble proportion;
-  GstClockTime earliest_time;
-  guint64 qos_processed, qos_dropped;
-
-  gboolean send_stream_start;
+  /* < private > */
+  GstVideoAggregatorPrivate *priv;
 };
 
+/**
+ * @disable_frame_convertion: Allows subclasses to disable the frame colorspace
+ * conversion feature
+ * @update_src_info: Lets subclasses update the src #GstVideoInfo representing
+ * the src pad caps before usage.
+ * @aggregate_frames: Lets subclasses aggregate frames that are ready. Subclasses
+ * should iterate the GstElement.sinkpads and use the already mapped #GstVideoFrame from
+ * GstVideoAggregatorPad.aggregated_frame or directly use the #GstBuffer from
+ * GstVideoAggregatorPad.buffer if it needs to map the buffer in a special way. The result
+ * of the aggregation should land in @outbuffer.
+ * @get_output_buffer: Lets subclasses provide a #GstBuffer to be used as @outbuffer of
+ * the #aggregate_frames vmethod.
+ * @negotiated: Let's subclasses know what caps format has been negotiated
+ **/
 struct _GstVideoAggregatorClass
 {
   GstAggregatorClass parent_class;
 
-  /* Disable the frame colorspace conversion feature,
-   * making pad template management responsability
-   * of subclasses */
-  gboolean disable_frame_convertion;
+  gboolean           disable_frame_conversion;
 
-  gboolean			 (*modify_src_pad_info) (GstVideoAggregator *videoaggregator, GstVideoInfo *info);
-  GstFlowReturn      (*aggregate_frames)          (GstVideoAggregator *videoaggregator, GstBuffer *outbuffer);
-  GstCaps *          (*get_preferred_input_caps) (GstVideoAggregator *videoaggregator);
-  GstFlowReturn      (*get_output_buffer) (GstVideoAggregator *videoaggregator, GstBuffer **outbuffer);
-  gboolean           (*update_src_caps) (GstVideoAggregator *videoaggregator);
+  gboolean			 (*update_src_info)           (GstVideoAggregator *  videoaggregator,
+                                                   GstVideoInfo       *  info);
+  GstFlowReturn      (*aggregate_frames)          (GstVideoAggregator *  videoaggregator,
+                                                   GstBuffer          *  outbuffer);
+  GstFlowReturn      (*get_output_buffer)         (GstVideoAggregator *  videoaggregator,
+                                                   GstBuffer          ** outbuffer);
+  gboolean           (*negotiated)                (GstVideoAggregator *  videoaggregator,
+                                                   GstCaps            *  caps);
 };
 
-GType gst_videoaggregator_get_type (void);
-gboolean gst_videoaggregator_src_setcaps (GstVideoAggregator * vagg, GstCaps * caps);
+GType gst_videoaggregator_get_type       (void);
 
 G_END_DECLS
 #endif /* __GST_VIDEO_AGGREGATOR_H__ */
