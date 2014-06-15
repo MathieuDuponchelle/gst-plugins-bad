@@ -121,7 +121,8 @@ GstBuffer * gst_aggregator_pad_get_buffer   (GstAggregatorPad *  pad);
  *
  * Collectpads object.
  */
-struct _GstAggregator {
+struct _GstAggregator
+{
   GstElement               parent;
 
   GstPad                *  srcpad;
