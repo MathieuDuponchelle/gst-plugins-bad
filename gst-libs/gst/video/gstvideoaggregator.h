@@ -60,6 +60,7 @@ struct _GstVideoAggregator
 
   /* < private > */
   GstVideoAggregatorPrivate *priv;
+  gpointer          _gst_reserved[GST_PADDING];
 };
 
 /**
@@ -98,6 +99,8 @@ struct _GstVideoAggregatorClass
                                                    GstBuffer          ** outbuffer);
   gboolean           (*negotiated_caps)           (GstVideoAggregator *  videoaggregator,
                                                    GstCaps            *  caps);
+  /* < private > */
+  gpointer            _gst_reserved[GST_PADDING];
 };
 
 GType gst_videoaggregator_get_type       (void);
