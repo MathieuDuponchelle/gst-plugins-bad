@@ -573,7 +573,7 @@ gst_compositor_class_init (GstCompositorClass * klass)
       gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "Compositor",
-      "Filter/Editor/Video",
+      "Filter/Editor/Video/Compositor",
       "Composite multiple video streams", "Wim Taymans <wim@fluendo.com>, "
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 }
@@ -593,7 +593,7 @@ plugin_init (GstPlugin * plugin)
 
   gst_compositor_init_blend ();
 
-  return gst_element_register (plugin, "compositor", GST_RANK_PRIMARY,
+  return gst_element_register (plugin, "compositor", GST_RANK_PRIMARY + 1,
       GST_TYPE_COMPOSITOR);
 }
 
