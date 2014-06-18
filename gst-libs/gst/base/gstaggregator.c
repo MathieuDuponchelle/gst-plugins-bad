@@ -1,6 +1,6 @@
 /* GStreamer
- * Copyright (C) 2014 Mathieu Duponchelle <mathieu.duponchelle@oencreed.com>
- * Copyright (C) 2014 Thibault Saunier <tsaunier@opencreed.com>
+ * Copyright (C) 2014 Mathieu Duponchelle <mathieu.duponchelle@opencreed.com>
+ * Copyright (C) 2014 Thibault Saunier <tsaunier@gnome.org>
  *
  * gstaggregator.c:
  *
@@ -19,12 +19,49 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
+/**
+ * SECTION: gstaggregator
+ * @short_description: manages a set of pads with the purpose of
+ * aggregating their buffers.
+ * @see_also: gstcollectpads for historical reasons.
+ *
+ * Manages a set of pads with the purpose of aggregating their buffers.
+ * Control is given to the subclass when all pads have data.
+ * <itemizedlist>
+ *  <listitem><para>
+ *    Base class for mixers and muxers. Implementers should at least implement
+ *    the aggregate () vmethod.
+ *  </para></listitem>
+ *  <listitem><para>
+ *    When data is queued on all pads, tha aggregate vmethod is called.
+ *  </para></listitem>
+ *  <listitem><para>
+ *    One can peek at the data on any given GstAggregatorPad with the
+ *    gst_aggregator_pad_get_buffer () method, and take ownership of it
+ *    with the gst_aggregator_pad_steal_buffer () method. When a buffer
+ *    has been taken with steal_buffer (), a new buffer can be queued
+ *    on that pad.
+ *  </para></listitem>
+ *  <listitem><para>
+ *    If the subclass wishes to push a buffer downstream in its aggregate
+ *    implementation, it should do so through the
+ *    gst_aggregator_finish_buffer () method. This method will take care
+ *    of sending and ordering mandatory events such as stream start, caps
+ *    and segment.
+ *  </para></listitem>
+ *  <listitem><para>
+ *    Same goes for EOS events, which should not be pushed directly by the
+ *    subclass, it should instead return GST_FLOW_EOS in its aggregate 
+ *    implementation.
+ *  </para></listitem>
+ * </itemizedlist>
+ */
 
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
 
-#include <string.h>
+#include <string.h>  /* strlen */
 
 #include "gstaggregator.h"
 
@@ -122,7 +159,7 @@ struct _GstAggregatorPrivate
   /* Our state is >= PAUSED */
   gboolean running;
 
-  /* Unsure that when we remove all sources from the maincontext
+  /* Ensure that when we remove all sources from the maincontext
    * we can not add any source, avoiding:
    * "g_source_attach: assertion '!SOURCE_DESTROYED (source)' failed" */
   GMutex mcontext_lock;
@@ -147,6 +184,15 @@ typedef struct
   gboolean flush;
 } EventData;
 
+/**
+ * gst_aggregator_iterate_sinkpads: Iterate the sinkpads of aggregator
+ * to call a function on them.
+ * @func: The function to call.
+ * @user_data: The data to pass to @func.
+ *
+ * This mathod guarantees that @func will be called only once for each
+ * sink pad.
+ */
 gboolean
 gst_aggregator_iterate_sinkpads (GstAggregator * self,
     GstAggregatorPadForeachFunc func, gpointer user_data)
@@ -227,6 +273,12 @@ _check_all_pads_with_data_or_eos (GstAggregator * self,
   return FALSE;
 }
 
+/**
+ * gst_aggregator_set_src_caps: Sets the caps to be used on the src pad.
+ *
+ * @self: The #GstAggregator
+ * @caps: The #GstCaps to set later on the src pad.
+ */
 void
 gst_aggregator_set_src_caps (GstAggregator * self, GstCaps * caps)
 {
@@ -284,15 +336,23 @@ _push_mandatory_events (GstAggregator * self)
   }
 }
 
+/**
+ * gst_aggregator_finish_buffer:
+ * @self: The #GstAggregator
+ * @buffer: the #GstBuffer to push.
+ *
+ * This method will take care of sending mandatory events before pushing
+ * the provided buffer.
+ */
 GstFlowReturn
-gst_aggregator_finish_buffer (GstAggregator * self, GstBuffer * buf)
+gst_aggregator_finish_buffer (GstAggregator * self, GstBuffer * buffer)
 {
   _push_mandatory_events (self);
 
   if (!g_atomic_int_get (&self->priv->flush_seeking) &&
       gst_pad_is_active (self->srcpad)) {
-    GST_TRACE_OBJECT (self, "pushing buffer %" GST_PTR_FORMAT, buf);
-    return gst_pad_push (self->srcpad, buf);
+    GST_TRACE_OBJECT (self, "pushing buffer %" GST_PTR_FORMAT, buffer);
+    return gst_pad_push (self->srcpad, buffer);
   } else {
     GST_INFO_OBJECT (self, "Not pushing (active: %i, flushing: %i)",
         g_atomic_int_get (&self->priv->flush_seeking),
@@ -545,7 +605,7 @@ _sink_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
       GST_DEBUG_OBJECT (aggpad, "EOS");
 
       /* We still have a buffer, and we don't want the subclass to have to
-       * check for it. Mark pending_eos, eos will be set when get_buffer is
+       * check for it. Mark pending_eos, eos will be set when steal_buffer is
        * called
        */
       PAD_LOCK_EVENT (aggpad);
@@ -561,17 +621,14 @@ _sink_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
     }
     case GST_EVENT_SEGMENT:
     {
-      PAD_LOCK_EVENT (aggpad);
       gst_event_copy_segment (event, &aggpad->segment);
       PAD_UNLOCK_EVENT (aggpad);
 
       goto eat;
     }
     case GST_EVENT_STREAM_START:
-      goto eat;
-    default:
     {
-      break;
+      goto eat;
     }
     case GST_EVENT_TAG:
     {
@@ -587,9 +644,13 @@ _sink_event (GstAggregator * self, GstAggregatorPad * aggpad, GstEvent * event)
       }
       break;
     }
+    default:
+    {
+      break;
+    }
   }
 
-  GST_DEBUG_OBJECT (pad, "Fowarding event: %" GST_PTR_FORMAT, event);
+  GST_DEBUG_OBJECT (pad, "Forwarding event: %" GST_PTR_FORMAT, event);
   return gst_pad_event_default (pad, GST_OBJECT (self), event);
 
 eat:
@@ -618,14 +679,8 @@ _change_state (GstElement * element, GstStateChange transition)
 
 
   switch (transition) {
-    case GST_STATE_CHANGE_NULL_TO_READY:
-      break;
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       agg_class->start (self);
-      break;
-    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      break;
-    case GST_STATE_CHANGE_PAUSED_TO_READY:
       break;
     default:
       break;
@@ -638,12 +693,6 @@ _change_state (GstElement * element, GstStateChange transition)
 
 
   switch (transition) {
-    case GST_STATE_CHANGE_NULL_TO_READY:
-      break;
-    case GST_STATE_CHANGE_READY_TO_PAUSED:
-      break;
-    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       agg_class->stop (self);
       break;
@@ -938,8 +987,8 @@ src_activate_mode (GstPad * pad,
     }
   }
 
-  /* desactivating */
-  GST_INFO_OBJECT (self, "Desactivating srcpad");
+  /* deactivating */
+  GST_INFO_OBJECT (self, "Deactivating srcpad");
   _stop_srcpad_task (self, FALSE);
 
   return TRUE;
@@ -954,12 +1003,6 @@ _sink_query (GstAggregator * self, GstAggregatorPad * aggpad, GstQuery * query)
 }
 
 /* GObject vmethods implementations */
-static void
-gst_aggregator_finalize (GObject * object)
-{
-}
-
-
 static void
 gst_aggregator_class_init (GstAggregatorClass * klass)
 {
@@ -985,8 +1028,6 @@ gst_aggregator_class_init (GstAggregatorClass * klass)
   gstelement_class->request_new_pad = GST_DEBUG_FUNCPTR (_request_new_pad);
   gstelement_class->release_pad = GST_DEBUG_FUNCPTR (_release_pad);
   gstelement_class->change_state = GST_DEBUG_FUNCPTR (_change_state);
-
-  gobject_class->finalize = GST_DEBUG_FUNCPTR (gst_aggregator_finalize);
 }
 
 static void
@@ -1158,11 +1199,6 @@ pad_activate_mode_func (GstPad * pad,
 G_DEFINE_TYPE (GstAggregatorPad, gst_aggregator_pad, GST_TYPE_PAD);
 
 static void
-gst_aggregator_pad_finalize (GObject * object)
-{
-}
-
-static void
 _pad_constructed (GObject * object)
 {
   GstPad *pad = GST_PAD (object);
@@ -1184,7 +1220,6 @@ gst_aggregator_pad_class_init (GstAggregatorPadClass * klass)
 
   g_type_class_add_private (klass, sizeof (GstAggregatorPadPrivate));
 
-  gobject_class->finalize = GST_DEBUG_FUNCPTR (gst_aggregator_pad_finalize);
   gobject_class->constructed = GST_DEBUG_FUNCPTR (_pad_constructed);
 }
 

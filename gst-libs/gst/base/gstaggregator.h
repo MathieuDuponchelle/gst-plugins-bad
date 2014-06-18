@@ -233,7 +233,7 @@ struct _GstAggregatorClass {
  ************************/
 
 GstFlowReturn  gst_aggregator_finish_buffer         (GstAggregator                *  agg,
-                                                     GstBuffer                    *  buf);
+                                                     GstBuffer                    *  buffer);
 void           gst_aggregator_set_src_caps          (GstAggregator                *  agg,
                                                      GstCaps                      *  caps);
 
