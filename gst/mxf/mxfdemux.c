@@ -2711,7 +2711,7 @@ from_index:
         demux->offset = old_offset;
         demux->current_partition = old_partition;
         break;
-      } else if (G_UNLIKELY (ret == GST_FLOW_OK)) {
+      } else if (G_LIKELY (ret == GST_FLOW_OK)) {
         ret = gst_mxf_demux_handle_klv_packet (demux, &key, buffer, TRUE);
         gst_buffer_unref (buffer);
       }
