@@ -1651,7 +1651,6 @@ gst_videoaggregator_start (GstAggregator * agg)
     return FALSE;
 
   vagg->priv->send_caps = TRUE;
-  gst_segment_init (&agg->segment, GST_FORMAT_TIME);
   gst_caps_replace (&vagg->priv->current_caps, NULL);
 
   return TRUE;
