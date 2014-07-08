@@ -1965,6 +1965,9 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
       demux->segment.stop += firstts - demux->segment.start;
     demux->segment.position = firstts;
     demux->segment.start = firstts;
+    demux->start_offset = firstts;
+  } else {
+    demux->segment.start += demux->start_offset;
   }
 
   if (!demux->segment_event) {
