@@ -88,6 +88,8 @@ struct _GstTSDemux
 
   /* Used when seeking for a keyframe to go backward in the stream */
   guint64 last_seek_offset;
+
+  guint64 start_offset;
 };
 
 struct _GstTSDemuxClass
