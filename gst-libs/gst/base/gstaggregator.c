@@ -317,11 +317,13 @@ _push_mandatory_events (GstAggregator * self)
   }
 
   if (self->priv->srccaps) {
+    GstEvent *caps_event = gst_event_new_caps (self->priv->srccaps);
+
+    gst_event_set_seqnum (caps_event, priv->seqnum);
 
     GST_INFO_OBJECT (self, "pushing caps: %" GST_PTR_FORMAT,
         self->priv->srccaps);
-    if (!gst_pad_push_event (self->srcpad,
-            gst_event_new_caps (self->priv->srccaps))) {
+    if (!gst_pad_push_event (self->srcpad, caps_event)) {
       GST_WARNING_OBJECT (self->srcpad, "Sending caps event failed");
     }
     gst_caps_unref (self->priv->srccaps);
@@ -836,6 +838,7 @@ _send_event (GstElement * element, GstEvent * event)
     gst_segment_do_seek (&self->segment, rate, fmt, flags, start_type, start,
         stop_type, stop, NULL);
 
+    self->priv->seqnum = gst_event_get_seqnum (event);
     GST_DEBUG_OBJECT (element, "Storing segment %" GST_PTR_FORMAT, event);
   }
   GST_STATE_UNLOCK (element);
