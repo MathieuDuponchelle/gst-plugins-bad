@@ -569,6 +569,51 @@ gst_ts_demux_srcpad_query (GstPad * pad, GstObject * parent, GstQuery * query)
 
 }
 
+static gboolean
+gst_ts_demux_sinkpad_query (GstPad * pad, GstObject * parent, GstQuery * query)
+{
+  gboolean res = TRUE;
+  GstTSDemux *demux;
+  MpegTSBase *base;
+
+  demux = GST_TS_DEMUX (parent);
+  base = GST_MPEGTS_BASE (demux);
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_CONVERT:{
+      GstFormat src_fmt, dest_fmt;
+      gint64 src_val, dest_val;
+
+      gst_query_parse_convert (query, &src_fmt, &src_val, &dest_fmt, &dest_val);
+
+      if (src_fmt == GST_FORMAT_BYTES && dest_fmt == GST_FORMAT_TIME) {
+        dest_val = mpegts_packetizer_offset_to_ts (base->packetizer, src_val,
+            demux->program->pcr_pid);
+
+        if (GST_CLOCK_TIME_IS_VALID (dest_val))
+          gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
+        else
+          res = FALSE;
+      } else if (src_fmt == GST_FORMAT_TIME && dest_fmt == GST_FORMAT_BYTES) {
+        dest_val = mpegts_packetizer_ts_to_offset (base->packetizer, src_val,
+            demux->program->pcr_pid);
+
+        if (dest_val != -1)
+          gst_query_set_convert (query, src_fmt, src_val, dest_fmt, dest_val);
+        else
+          res = FALSE;
+      }
+
+      break;
+    }
+    default:
+      res = gst_pad_query_default (pad, parent, query);
+  }
+
+  return res;
+
+}
+
 static void
 clear_simple_buffer (SimpleBuffer * sbuf)
 {
@@ -1360,6 +1405,8 @@ done:
         caps);
     gst_pad_set_query_function (pad, gst_ts_demux_srcpad_query);
     gst_pad_set_event_function (pad, gst_ts_demux_srcpad_event);
+
+    gst_pad_set_query_function (base->sinkpad, gst_ts_demux_sinkpad_query);
   }
 
   if (name)
