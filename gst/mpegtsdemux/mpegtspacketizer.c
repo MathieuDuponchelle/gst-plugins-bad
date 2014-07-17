@@ -648,8 +648,9 @@ mpegts_packetizer_push (MpegTSPacketizer2 * packetizer, GstBuffer * buffer)
   }
 
   GST_DEBUG ("Pushing %" G_GSIZE_FORMAT " byte from offset %"
-      G_GUINT64_FORMAT, gst_buffer_get_size (buffer),
-      GST_BUFFER_OFFSET (buffer));
+      G_GUINT64_FORMAT " With ts:%" GST_TIME_FORMAT,
+      gst_buffer_get_size (buffer), GST_BUFFER_OFFSET (buffer),
+      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buffer)));
   gst_adapter_push (packetizer->adapter, buffer);
   /* If buffer timestamp is valid, store it */
   if (GST_CLOCK_TIME_IS_VALID (GST_BUFFER_TIMESTAMP (buffer)))
@@ -2168,15 +2169,19 @@ mpegts_packetizer_pts_to_ts (MpegTSPacketizer2 * packetizer,
         GST_TIME_ARGS (pcrtable->base_pcrtime),
         GST_TIME_ARGS (pcrtable->base_time),
         GST_TIME_ARGS (pcrtable->pcroffset));
+    GST_DEBUG ("last_pcrtime %" GST_TIME_FORMAT,
+        GST_TIME_ARGS (pcrtable->last_pcrtime));
     res = pts + pcrtable->pcroffset;
 
-    /* Don't return anything if we differ too much against last seen PCR */
-    /* FIXME : Ideally we want to figure out whether we have a wraparound or
-     * a reset so we can provide actual values.
-     * That being said, this will only happen for the small interval of time
-     * where PTS/DTS are wrapping just before we see the first reset/wrap PCR
-     */
     if (G_UNLIKELY (ABSDIFF (res, pcrtable->last_pcrtime) > 15 * GST_SECOND))
+      /* Don't return anything if we differ too much against last seen PCR */
+      /* FIXME : Ideally we want to figure out whether we have a wraparound or
+       * a reset so we can provide actual values.
+       * That being said, this will only happen for the small interval of time
+       * where PTS/DTS are wrapping just before we see the first reset/wrap PCR
+       */
+      res = GST_CLOCK_TIME_NONE;
+    else if (res < pcrtable->base_pcrtime)
       res = GST_CLOCK_TIME_NONE;
     else
       res += pcrtable->base_time + pcrtable->skew - pcrtable->base_pcrtime;

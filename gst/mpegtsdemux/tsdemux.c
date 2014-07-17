@@ -1952,6 +1952,7 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
 {
   MpegTSBase *base = (MpegTSBase *) demux;
   GstClockTime lowest_pts = GST_CLOCK_TIME_NONE;
+  GstClockTime highest_pts = GST_CLOCK_TIME_NONE;
   GstClockTime firstts = 0;
   GList *tmp;
 
@@ -1974,12 +1975,19 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
       if (!GST_CLOCK_TIME_IS_VALID (lowest_pts)
           || pstream->first_dts < lowest_pts)
         lowest_pts = pstream->first_dts;
+      if (!GST_CLOCK_TIME_IS_VALID (highest_pts)
+          || pstream->first_dts > highest_pts)
+        highest_pts = pstream->first_dts;
     }
   }
-  if (GST_CLOCK_TIME_IS_VALID (lowest_pts))
-    firstts = lowest_pts;
   GST_DEBUG ("lowest_pts %" G_GUINT64_FORMAT " => clocktime %" GST_TIME_FORMAT,
-      lowest_pts, GST_TIME_ARGS (firstts));
+      lowest_pts, GST_TIME_ARGS (lowest_pts));
+  GST_DEBUG ("highest pts %" G_GUINT64_FORMAT " => clocktime %" GST_TIME_FORMAT,
+      highest_pts, GST_TIME_ARGS (highest_pts));
+  if (GST_CLOCK_TIME_IS_VALID (highest_pts))
+    firstts = highest_pts;
+  else if (GST_CLOCK_TIME_IS_VALID (lowest_pts))
+    firstts = lowest_pts;
 
   if (demux->calculate_update_segment) {
     GST_DEBUG ("Calculating update segment");
@@ -2001,8 +2009,25 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
     if (base->segment.format == GST_FORMAT_TIME) {
       /* Try to recover segment info from base if it's in TIME format */
       demux->segment = base->segment;
+      /* $#*@($%(#@*FDJSLK JFWIUR#(@I */
+      GST_DEBUG ("Re-using upstream segment");
+      if (!base->upstream_live) {
+        GstClockTime segdiff = GST_CLOCK_TIME_NONE;
+        if (GST_CLOCK_TIME_IS_VALID (demux->segment.stop))
+          segdiff = demux->segment.stop - demux->segment.start;
+        GST_DEBUG ("Not live, setting segment start to %" GST_TIME_FORMAT,
+            GST_TIME_ARGS (firstts));
+        demux->segment.start = firstts;
+        demux->segment.time = firstts;
+        if (GST_CLOCK_TIME_IS_VALID (segdiff)) {
+          GST_DEBUG ("Not live, setting segment stop to %" GST_TIME_FORMAT,
+              GST_TIME_ARGS (firstts + segdiff));
+          demux->segment.stop = firstts + segdiff;
+        }
+      }
     } else {
       /* Start from the first ts/pts */
+      GST_DEBUG ("Calculating new segment based on firstts");
       gst_segment_init (&demux->segment, GST_FORMAT_TIME);
       demux->segment.start = firstts;
       demux->segment.stop = GST_CLOCK_TIME_NONE;
@@ -2011,12 +2036,22 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
       demux->segment.rate = demux->rate;
     }
   } else if (demux->segment.start < firstts) {
+    GST_DEBUG ("Adjustments");
     /* Take into account the offset to the first buffer timestamp */
     if (GST_CLOCK_TIME_IS_VALID (demux->segment.stop))
       demux->segment.stop += firstts - demux->segment.start;
     demux->segment.position = firstts;
     demux->segment.start = firstts;
+    /* Upstream base segment might have changed */
+    if (base->segment.format == GST_FORMAT_TIME)
+      demux->segment.base = base->segment.base;
   }
+
+  GST_DEBUG ("demux->segment is now " SEGMENT_FORMAT,
+      SEGMENT_ARGS (demux->segment));
+  GST_DEBUG ("diff lowts - start : %" GST_TIME_FORMAT " diff hights - lowts : %"
+      GST_TIME_FORMAT, GST_TIME_ARGS (firstts - demux->segment.start),
+      GST_TIME_ARGS (highest_pts - firstts));
 
   if (!demux->segment_event) {
     demux->segment_event = gst_event_new_segment (&demux->segment);

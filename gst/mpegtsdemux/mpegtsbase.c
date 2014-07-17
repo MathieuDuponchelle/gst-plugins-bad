@@ -169,6 +169,8 @@ mpegts_base_reset (MpegTSBase * base)
 {
   MpegTSBaseClass *klass = GST_MPEGTS_BASE_GET_CLASS (base);
 
+  GST_DEBUG_OBJECT (base, "Resetting");
+
   mpegts_packetizer_clear (base->packetizer);
   memset (base->is_pes, 0, 1024);
   memset (base->known_psi, 0, 1024);
@@ -1088,6 +1090,7 @@ mpegts_base_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       hard = (base->mode != BASE_MODE_SEEKING);
       mpegts_packetizer_flush (base->packetizer, hard);
       mpegts_base_flush (base, hard);
+      GST_DEBUG_OBJECT (base, "Resetting base->segment");
       gst_segment_init (&base->segment, GST_FORMAT_UNDEFINED);
       base->seen_pat = FALSE;
       break;
