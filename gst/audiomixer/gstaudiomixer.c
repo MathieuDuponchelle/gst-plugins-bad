@@ -716,6 +716,8 @@ gst_audiomixer_src_event (GstAggregator * agg, GstEvent * event)
 
         audiomixer->offset = gst_util_uint64_scale (agg->segment.position,
             rate, GST_SECOND);
+
+        audiomixer->base_time = agg->segment.start;
       }
 
       if (agg->segment.stop != -1)
@@ -1145,6 +1147,7 @@ gst_audio_mixer_fill_buffer (GstAudioMixer * audiomixer, GstAudioMixerPad * pad,
     guint64 start_running_time_offset;
     guint64 end_running_time_offset;
 
+    aggpad->segment.base = audiomixer->base_time;
     start_running_time =
         gst_segment_to_running_time (&aggpad->segment,
         GST_FORMAT_TIME, start_time);
