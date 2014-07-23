@@ -1555,37 +1555,8 @@ gst_audiomixer_aggregate (GstAggregator * agg)
   }
 
   if (is_eos) {
-    gint64 max_offset = 0;
-    gboolean empty_buffer = TRUE;
-
-    GST_DEBUG_OBJECT (audiomixer, "We're EOS");
-
-
-    GST_OBJECT_LOCK (agg);
-    for (iter = GST_ELEMENT (agg)->sinkpads; iter; iter = iter->next) {
-      GstAudioMixerPad *pad = GST_AUDIO_MIXER_PAD (iter->data);
-
-      max_offset = MAX ((gint64) max_offset, (gint64) pad->output_offset);
-      if (pad->output_offset > audiomixer->offset)
-        empty_buffer = FALSE;
-    }
-    GST_OBJECT_UNLOCK (agg);
-
-    /* This means EOS or no pads at all */
-    if (empty_buffer) {
-      gst_buffer_replace (&audiomixer->current_buffer, NULL);
-      goto eos;
-    }
-
-    if (max_offset <= next_offset) {
-      GST_DEBUG_OBJECT (audiomixer,
-          "Last buffer is incomplete: %" G_GUINT64_FORMAT " <= %"
-          G_GUINT64_FORMAT, max_offset, next_offset);
-      next_offset = max_offset;
-
-      gst_buffer_resize (outbuf, 0, (next_offset - audiomixer->offset) * bpf);
-      next_timestamp = gst_util_uint64_scale (next_offset, GST_SECOND, rate);
-    }
+    gst_buffer_replace (&audiomixer->current_buffer, NULL);
+    goto eos;
   }
 
   /* set timestamps on the output buffer */
