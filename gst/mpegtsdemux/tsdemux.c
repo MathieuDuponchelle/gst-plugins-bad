@@ -2041,6 +2041,7 @@ calculate_and_push_newsegment (GstTSDemux * demux, TSDemuxStream * stream)
     if (GST_CLOCK_TIME_IS_VALID (demux->segment.stop))
       demux->segment.stop += firstts - demux->segment.start;
     demux->segment.position = firstts;
+    demux->segment.time = firstts;
     demux->segment.start = firstts;
     /* Upstream base segment might have changed */
     if (base->segment.format == GST_FORMAT_TIME)
