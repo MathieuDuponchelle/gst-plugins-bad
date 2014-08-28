@@ -141,6 +141,7 @@ _aggpad_flush (GstAggregatorPad * aggpad, GstAggregator * agg)
   GstAggregatorPadClass *klass = GST_AGGREGATOR_PAD_GET_CLASS (aggpad);
 
   aggpad->eos = FALSE;
+  aggpad->priv->pending_eos = FALSE;
   aggpad->priv->flushing = FALSE;
 
   if (klass->flush)
