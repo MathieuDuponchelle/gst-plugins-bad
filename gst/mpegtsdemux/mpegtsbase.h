@@ -90,6 +90,10 @@ struct _MpegTSBaseProgram
   gboolean active;
   /* TRUE if this is the first program created */
   gboolean initial_program;
+
+  /* When we receive a stream start in PUSHING mode, we don't want to remove
+   * the program immediately but wait for a new program to be added */
+  gboolean to_remove;
 };
 
 typedef enum {

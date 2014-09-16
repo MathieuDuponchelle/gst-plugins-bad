@@ -1430,8 +1430,10 @@ gst_ts_demux_stream_added (MpegTSBase * base, MpegTSBaseStream * bstream,
     /* Create the pad */
     if (bstream->stream_type != 0xff) {
       stream->pad = create_pad_for_stream (base, bstream, program);
-      if (stream->pad)
+      if (stream->pad) {
         gst_flow_combiner_add_pad (demux->flowcombiner, stream->pad);
+        gst_element_add_pad ((GstElement *) demux, stream->pad);
+      }
     }
 
     if (base->mode != BASE_MODE_PUSHING
@@ -1507,7 +1509,6 @@ activate_pad_for_stream (GstTSDemux * tsdemux, TSDemuxStream * stream)
   if (stream->pad) {
     GST_DEBUG_OBJECT (tsdemux, "Activating pad %s:%s for stream %p",
         GST_DEBUG_PAD_NAME (stream->pad), stream);
-    gst_element_add_pad ((GstElement *) tsdemux, stream->pad);
     stream->active = TRUE;
     GST_DEBUG_OBJECT (stream->pad, "done adding pad");
 

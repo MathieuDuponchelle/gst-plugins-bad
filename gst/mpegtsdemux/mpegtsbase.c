@@ -163,9 +163,17 @@ mpegts_base_get_property (GObject * object, guint prop_id,
   }
 }
 
+static gboolean
+mark_program_for_removal (gpointer key, MpegTSBaseProgram * program,
+    MpegTSBase * base)
+{
+  program->to_remove = TRUE;
+
+  return TRUE;
+}
 
 static void
-mpegts_base_reset (MpegTSBase * base)
+mpegts_base_reset (MpegTSBase * base, gboolean remove_programs)
 {
   MpegTSBaseClass *klass = GST_MPEGTS_BASE_GET_CLASS (base);
 
@@ -205,8 +213,12 @@ mpegts_base_reset (MpegTSBase * base)
   base->upstream_live = FALSE;
   base->queried_latency = FALSE;
 
-  g_hash_table_foreach_remove (base->programs, (GHRFunc) remove_each_program,
-      base);
+  if (remove_programs)
+    g_hash_table_foreach_remove (base->programs, (GHRFunc) remove_each_program,
+        base);
+  else
+    g_hash_table_foreach (base->programs, (GHFunc) mark_program_for_removal,
+        base);
 
   if (klass->reset)
     klass->reset (base);
@@ -237,7 +249,7 @@ mpegts_base_init (MpegTSBase * base)
   base->push_data = TRUE;
   base->push_section = TRUE;
 
-  mpegts_base_reset (base);
+  mpegts_base_reset (base, TRUE);
 }
 
 static void
@@ -341,6 +353,7 @@ mpegts_base_new_program (MpegTSBase * base,
   program->pcr_pid = G_MAXUINT16;
   program->streams = g_new0 (MpegTSBaseStream *, 0x2000);
   program->patcount = 0;
+  program->to_remove = FALSE;
 
   return program;
 }
@@ -630,6 +643,18 @@ mpegts_base_deactivate_program (MpegTSBase * base, MpegTSBaseProgram * program)
     klass->program_stopped (base, program);
 }
 
+static gboolean
+remove_marked_programs (gpointer key, MpegTSBaseProgram * program,
+    MpegTSBase * base)
+{
+  if (program->to_remove) {
+    mpegts_base_deactivate_program (base, program);
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
 static void
 mpegts_base_activate_program (MpegTSBase * base, MpegTSBaseProgram * program,
     guint16 pmt_pid, GstMpegtsSection * section, const GstMpegtsPMT * pmt,
@@ -657,6 +682,8 @@ mpegts_base_activate_program (MpegTSBase * base, MpegTSBaseProgram * program,
       get_registration_from_descriptors (pmt->descriptors);
   GST_DEBUG ("program 0x%04x, registration_id %" SAFE_FOURCC_FORMAT,
       program->program_number, SAFE_FOURCC_ARGS (program->registration_id));
+
+  program->initial_program = initial_program;
 
   for (i = 0; i < pmt->streams->len; ++i) {
     GstMpegtsPMTStream *stream = g_ptr_array_index (pmt->streams, i);
@@ -709,16 +736,16 @@ mpegts_base_activate_program (MpegTSBase * base, MpegTSBaseProgram * program,
   mpegts_base_program_add_stream (base, program, pmt->pcr_pid, -1, NULL);
   MPEGTS_BIT_SET (base->is_pes, pmt->pcr_pid);
 
-  program->active = TRUE;
-  program->initial_program = initial_program;
+  g_hash_table_foreach_remove (base->programs, (GHRFunc) remove_marked_programs,
+        base);
 
+  program->active = TRUE;
   klass = GST_MPEGTS_BASE_GET_CLASS (base);
   if (klass->program_started != NULL)
     klass->program_started (base, program);
 
   GST_DEBUG_OBJECT (base, "new pmt activated");
 }
-
 
 static gboolean
 mpegts_base_apply_pat (MpegTSBase * base, GstMpegtsSection * section)
@@ -1075,6 +1102,10 @@ mpegts_base_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       res = GST_MPEGTS_BASE_GET_CLASS (base)->push_event (base, event);
       break;
     case GST_EVENT_STREAM_START:
+      if (base->mode == BASE_MODE_PUSHING) {
+        mpegts_base_reset (base, FALSE);
+        base->mode = BASE_MODE_PUSHING;
+      }
       gst_event_unref (event);
       break;
     case GST_EVENT_EOS:
@@ -1575,7 +1606,7 @@ mpegts_base_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_READY_TO_PAUSED:
-      mpegts_base_reset (base);
+      mpegts_base_reset (base, TRUE);
       break;
     default:
       break;
@@ -1585,7 +1616,7 @@ mpegts_base_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_PAUSED_TO_READY:
-      mpegts_base_reset (base);
+      mpegts_base_reset (base, TRUE);
       if (base->mode != BASE_MODE_PUSHING)
         base->mode = BASE_MODE_SCANNING;
       break;
