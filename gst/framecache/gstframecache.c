@@ -105,33 +105,13 @@ done:
 static GstBuffer *
 _get_cached_buffer (GstFrameCache * fc, GstClockTime position)
 {
-  GstBuffer *buffer = NULL;
   GSequenceIter *iter;
 
-  iter = g_sequence_search (fc->buffers, &position, search_buffer, NULL);
+  iter = _get_cached_iter (fc, position);
+  if (iter)
+    return g_sequence_get (iter);
 
-  if (!g_sequence_iter_is_end (iter)) {
-    buffer = g_sequence_get (iter);
-
-    if (GST_BUFFER_PTS (buffer) == position)
-      goto done;
-  }
-
-  if (g_sequence_iter_is_begin (iter)) {
-    buffer = NULL;
-    goto done;
-  }
-
-  iter = g_sequence_iter_prev (iter);
-  buffer = g_sequence_get (iter);
-
-  if (_buffer_covers_position (buffer, position))
-    goto done;
-
-  buffer = NULL;
-
-done:
-  return buffer;
+  return NULL;
 }
 
 static gboolean
