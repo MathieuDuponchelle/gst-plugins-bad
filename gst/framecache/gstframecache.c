@@ -164,7 +164,7 @@ _make_room (GstFrameCache *fc)
 
   interval = _get_iter_pts (last) - _get_iter_pts (first);
 
-  if (fc->requested_segment.start + DEFAULT_DURATION < _get_iter_pts (last))
+  if (fc->requested_segment.position + DEFAULT_DURATION < _get_iter_pts (last))
     return FALSE;
 
   if (interval > DEFAULT_DURATION) {
@@ -179,14 +179,19 @@ _update_buffers (GstFrameCache * fc)
 {
   GstEvent *event;
 
-  if (!_make_room (fc))
+  if (!_make_room (fc)) {
     return FALSE;
+  }
 
   if (fc->forward_done == FALSE && fc->segment_done == TRUE) {
+    GstClockTime stop = fc->stop + DEFAULT_LOOKAHEAD_DURATION;
+
+    if (GST_CLOCK_TIME_IS_VALID (fc->requested_segment.stop))
+      stop = MIN (stop, fc->requested_segment.stop);
     fc->segment_done = FALSE;
     event = gst_event_new_seek (1.0, GST_FORMAT_TIME,
-        GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-        GST_SEEK_TYPE_SET, fc->stop, GST_SEEK_TYPE_SET, fc->stop + DEFAULT_LOOKAHEAD_DURATION);
+        GST_SEEK_FLAG_ACCURATE | GST_SEEK_FLAG_FLUSH,
+        GST_SEEK_TYPE_SET, fc->stop, GST_SEEK_TYPE_SET, stop);
     GST_INFO_OBJECT (fc, "pushing %" GST_PTR_FORMAT, event);
     gst_pad_event_default (fc->srcpad, GST_OBJECT (fc), event);
   } else if (fc->forward_done == TRUE) {
@@ -239,7 +244,6 @@ _do_seek (GstFrameCache * fc, GstPad * pad, GstEvent * event)
     fc->requested_segment.position = start;
   }
 
-  _update_buffers (fc);
   _broadcast_src_pad (fc, TRUE);
 
   return TRUE;
@@ -253,6 +257,10 @@ gst_frame_cache_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_SEEK:
       res = _do_seek (GST_FRAME_CACHE (parent), pad, event);
+      break;
+    case GST_EVENT_QOS:
+      /* FIXME : we might want to respect QOS somehow */
+      res = TRUE;
       break;
     default:
       res = gst_pad_event_default (pad, parent, event);
@@ -310,18 +318,17 @@ gst_frame_cache_loop (GstFrameCache * fc)
 
   if (!fc->running) {
     gst_pad_pause_task (fc->srcpad);
-    GST_ERROR ("stop that shit now ...");
+    GST_INFO_OBJECT (fc, "paused task now ...");
     return;
   }
 
-  GST_ERROR ("inspecting");
   if (fc->send_events == TRUE)
   {
     gst_pad_push_event (fc->srcpad, gst_event_new_caps (fc->sinkcaps));
     actual_segment = gst_segment_copy (&fc->requested_segment);
     actual_segment->start = fc->requested_segment.start;
-    actual_segment->base = actual_segment->start;
     actual_segment->time = actual_segment->start;
+    GST_INFO ("pushing segment %" GST_SEGMENT_FORMAT, actual_segment);
     gst_pad_push_event (fc->srcpad, gst_event_new_segment (actual_segment));
     fc->send_events = FALSE;
   }
@@ -333,23 +340,32 @@ gst_frame_cache_loop (GstFrameCache * fc)
   g_mutex_unlock (&fc->lock);
 
   while (buffer) {
-    fc->requested_segment.position = GST_BUFFER_PTS (buffer) + GST_BUFFER_DURATION (buffer);
+    GstClockTime new_pos = GST_BUFFER_PTS (buffer) + GST_BUFFER_DURATION (buffer);
     GST_DEBUG_OBJECT (fc, "pushing buffer %" GST_PTR_FORMAT, buffer);
     ret = gst_pad_push (fc->srcpad, buffer);
+    GST_DEBUG_OBJECT (fc, "pushed buffer, ret is %s", gst_flow_get_name (ret));
+
     if (ret != GST_FLOW_OK)
       break;
+
+    fc->requested_segment.position = new_pos;
     g_mutex_lock (&fc->lock);
     buffer = _get_cached_buffer (fc, fc->requested_segment.position);
     if (buffer)
       buffer = gst_buffer_ref (buffer);
     g_mutex_unlock (&fc->lock);
   }
+
+  g_idle_add((GSourceFunc) _update_buffers, fc);
 }
 
 static GstStateChangeReturn
 gst_frame_cache_change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret;
+  GstFrameCache *fc = GST_FRAME_CACHE (element);
+
+  (void) fc;
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
@@ -433,28 +449,23 @@ static GstFlowReturn
 gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 {
   GstFrameCache *fc = GST_FRAME_CACHE (parent);
+  GSequenceIter *cached;
 
   GST_DEBUG ("chaining %" GST_PTR_FORMAT, buffer);
-  if (!fc->passthrough) {
-    GSequenceIter *cached;
 
-    g_mutex_lock (&fc->lock);
-    cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
-    fc->current_position = GST_BUFFER_PTS (buffer);
+  g_mutex_lock (&fc->lock);
+  cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
+  fc->current_position = GST_BUFFER_PTS (buffer);
 
-    if (cached != NULL) {
-      g_sequence_remove (cached);
-    }
-
-    g_sequence_insert_sorted (fc->buffers, buffer, compare_buffers, NULL);
-    g_mutex_unlock (&fc->lock);
-    GST_DEBUG ("cached buffer");
-
-    _broadcast_src_pad (fc, FALSE);
-  } else {
-    GST_ERROR ("and pushing it bitch");
-    gst_pad_push (fc->srcpad, buffer);
+  if (cached != NULL) {
+    g_sequence_remove (cached);
   }
+
+  g_sequence_insert_sorted (fc->buffers, buffer, compare_buffers, NULL);
+  g_mutex_unlock (&fc->lock);
+  GST_DEBUG ("cached buffer");
+
+  _broadcast_src_pad (fc, FALSE);
 
   return GST_FLOW_OK;
 }
@@ -503,17 +514,17 @@ gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       break;
     case GST_EVENT_FLUSH_START:
     case GST_EVENT_FLUSH_STOP:
-      if (fc->passthrough == FALSE) {
-        gst_event_unref (event);
-        event = NULL;
-      }
+      gst_event_unref (event);
+      event = NULL;
       break;
     default:
       break;
   }
 
-  if (event)
+  if (event) {
+    GST_INFO ("pushing %" GST_PTR_FORMAT, event);
     return gst_pad_push_event (fc->srcpad, event);
+  }
   else
     return TRUE;
 }
