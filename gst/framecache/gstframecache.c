@@ -124,8 +124,10 @@ static void
 _clear_buffers (GstFrameCache * fc)
 {
   GST_INFO_OBJECT (fc, "clearing buffers, peace");
+  g_mutex_lock (&fc->lock);
   g_sequence_free (fc->buffers);
   fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
+  g_mutex_unlock (&fc->lock);
   fc->segment_done = TRUE;
 }
 
@@ -140,7 +142,9 @@ _free_buffers (GstFrameCache *fc, GstClockTime position, gboolean forward) {
   GSequenceIter *iter = _get_cached_iter (fc, position);
 
   if (forward) {
+    g_mutex_lock (&fc->lock);
     g_sequence_remove_range (g_sequence_get_begin_iter(fc->buffers), iter);
+    g_mutex_unlock (&fc->lock);
     fc->start = _get_iter_pts (g_sequence_get_begin_iter (fc->buffers));
     GST_INFO_OBJECT (fc, "we now start at %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->start));
   }
@@ -200,6 +204,7 @@ _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
     fc->send_events = TRUE;
     gst_pad_push_event (fc->srcpad, gst_event_new_flush_stop (TRUE));
   }
+
   g_cond_broadcast (&fc->buffer_cond);
 }
 
@@ -213,6 +218,7 @@ _do_seek (GstFrameCache * fc, GstPad * pad, GstEvent * event)
   gint64 start, stop;
   gboolean update;
 
+  GST_INFO_OBJECT (fc, "doing seek %" GST_PTR_FORMAT, event);
   gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
       &stop_type, &stop);
   gst_segment_do_seek (&fc->requested_segment, rate, format, flags, start_type,
@@ -320,14 +326,23 @@ gst_frame_cache_loop (GstFrameCache * fc)
     fc->send_events = FALSE;
   }
 
+  g_mutex_lock (&fc->lock);
   buffer = _get_cached_buffer (fc, fc->requested_segment.position);
+  if (buffer)
+    buffer = gst_buffer_ref (buffer);
+  g_mutex_unlock (&fc->lock);
+
   while (buffer) {
     fc->requested_segment.position = GST_BUFFER_PTS (buffer) + GST_BUFFER_DURATION (buffer);
     GST_DEBUG_OBJECT (fc, "pushing buffer %" GST_PTR_FORMAT, buffer);
-    ret = gst_pad_push (fc->srcpad, gst_buffer_ref (buffer));
+    ret = gst_pad_push (fc->srcpad, buffer);
     if (ret != GST_FLOW_OK)
       break;
+    g_mutex_lock (&fc->lock);
     buffer = _get_cached_buffer (fc, fc->requested_segment.position);
+    if (buffer)
+      buffer = gst_buffer_ref (buffer);
+    g_mutex_unlock (&fc->lock);
   }
 }
 
@@ -421,7 +436,10 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 
   GST_DEBUG ("chaining %" GST_PTR_FORMAT, buffer);
   if (!fc->passthrough) {
-    GSequenceIter *cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
+    GSequenceIter *cached;
+
+    g_mutex_lock (&fc->lock);
+    cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
     fc->current_position = GST_BUFFER_PTS (buffer);
 
     if (cached != NULL) {
@@ -429,6 +447,7 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
     }
 
     g_sequence_insert_sorted (fc->buffers, buffer, compare_buffers, NULL);
+    g_mutex_unlock (&fc->lock);
     GST_DEBUG ("cached buffer");
 
     _broadcast_src_pad (fc, FALSE);
