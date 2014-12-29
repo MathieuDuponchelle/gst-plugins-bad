@@ -224,9 +224,9 @@ _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
     fc->running = TRUE;
     gst_pad_start_task (fc->srcpad, (GstTaskFunction) gst_frame_cache_loop,
       fc, NULL);
+  } else {
+    g_cond_broadcast (&fc->buffer_cond);
   }
-
-  g_cond_broadcast (&fc->buffer_cond);
 }
 
 static gboolean
