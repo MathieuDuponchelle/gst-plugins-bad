@@ -44,6 +44,7 @@ struct _GstFrameCache
   gboolean running;
   gboolean segment_done;
   gboolean forward_done;
+  gboolean wait_flush_start;
   GstSegment requested_segment;
   GstSegment current_segment;
 };
