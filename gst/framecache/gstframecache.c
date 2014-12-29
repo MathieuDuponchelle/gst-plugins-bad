@@ -19,6 +19,9 @@ GST_DEBUG_CATEGORY_STATIC (gst_frame_cache_debug);
     "frame caching element");
 #define gst_frame_cache_parent_class parent_class
 
+static void
+gst_frame_cache_loop (GstFrameCache * fc);
+
 G_DEFINE_TYPE_WITH_CODE (GstFrameCache, gst_frame_cache, GST_TYPE_ELEMENT,
     _do_init);
 
@@ -210,8 +213,17 @@ _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
 {
   if (flush) {
     gst_pad_push_event (fc->srcpad, gst_event_new_flush_start ());
+
+    g_mutex_lock (&fc->buffer_lock);
+    fc->running = FALSE;
+    g_cond_broadcast (&fc->buffer_cond);
+    g_mutex_unlock (&fc->buffer_lock);
+    gst_pad_pause_task (fc->srcpad);
     fc->send_events = TRUE;
     gst_pad_push_event (fc->srcpad, gst_event_new_flush_stop (TRUE));
+    fc->running = TRUE;
+    gst_pad_start_task (fc->srcpad, (GstTaskFunction) gst_frame_cache_loop,
+      fc, NULL);
   }
 
   g_cond_broadcast (&fc->buffer_cond);
@@ -316,15 +328,7 @@ gst_frame_cache_loop (GstFrameCache * fc)
   GstBuffer *buffer;
   GstSegment *actual_segment;
   GstFlowReturn ret;
-  g_mutex_lock (&fc->buffer_lock);
-  g_cond_wait (&fc->buffer_cond, &fc->buffer_lock);
-  g_mutex_unlock (&fc->buffer_lock);
 
-  if (!fc->running) {
-    gst_pad_pause_task (fc->srcpad);
-    GST_INFO_OBJECT (fc, "paused task now ...");
-    return;
-  }
 
   if (fc->send_events == TRUE)
   {
@@ -349,8 +353,11 @@ gst_frame_cache_loop (GstFrameCache * fc)
     ret = gst_pad_push (fc->srcpad, buffer);
     GST_DEBUG_OBJECT (fc, "pushed buffer, ret is %s", gst_flow_get_name (ret));
 
-    if (ret != GST_FLOW_OK)
+    if (ret != GST_FLOW_OK) {
+      GST_INFO_OBJECT (fc->srcpad, "pausing task because %s", gst_flow_get_name (ret));
+      gst_pad_pause_task (fc->srcpad);
       break;
+    }
 
     fc->requested_segment.position = new_pos;
     g_mutex_lock (&fc->lock);
@@ -361,6 +368,16 @@ gst_frame_cache_loop (GstFrameCache * fc)
   }
 
   g_idle_add((GSourceFunc) _update_buffers, fc);
+
+  g_mutex_lock (&fc->buffer_lock);
+  if (!fc->running) {
+    gst_pad_pause_task (fc->srcpad);
+    GST_INFO_OBJECT (fc, "paused task now ...");
+    g_mutex_unlock (&fc->buffer_lock);
+    return;
+  }
+  g_cond_wait (&fc->buffer_cond, &fc->buffer_lock);
+  g_mutex_unlock (&fc->buffer_lock);
 }
 
 static GstStateChangeReturn
