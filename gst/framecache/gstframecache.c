@@ -194,7 +194,7 @@ _update_buffers (GstFrameCache * fc)
       stop = MIN (stop, fc->requested_segment.stop);
     fc->segment_done = FALSE;
     event = gst_event_new_seek (1.0, GST_FORMAT_TIME,
-        GST_SEEK_FLAG_ACCURATE | GST_SEEK_FLAG_FLUSH,
+        GST_SEEK_FLAG_KEY_UNIT | GST_SEEK_FLAG_SNAP_BEFORE | GST_SEEK_FLAG_FLUSH,
         GST_SEEK_TYPE_SET, fc->stop, GST_SEEK_TYPE_SET, stop);
     GST_INFO_OBJECT (fc, "pushing %" GST_PTR_FORMAT, event);
     gst_pad_event_default (fc->srcpad, GST_OBJECT (fc), event);
