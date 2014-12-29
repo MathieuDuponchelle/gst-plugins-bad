@@ -576,8 +576,11 @@ gst_frame_cache_src_activate_mode (GstPad * pad, GstObject * parent,
         gst_pad_start_task (fc->srcpad, (GstTaskFunction) gst_frame_cache_loop,
             fc, NULL);
       } else {
+        gst_pad_push_event (fc->srcpad, gst_event_new_flush_start ());
+        g_mutex_lock (&fc->buffer_lock);
         fc->running = FALSE;
-        _broadcast_src_pad (fc, TRUE);
+        g_cond_broadcast (&fc->buffer_cond);
+        g_mutex_unlock (&fc->buffer_lock);
         gst_pad_stop_task (fc->srcpad);
       }
       break;
