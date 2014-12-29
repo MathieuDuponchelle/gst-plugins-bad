@@ -126,7 +126,6 @@ _buffer_is_in_current_segment (GstFrameCache * fc, GstClockTime position)
 static void
 _clear_buffers (GstFrameCache * fc)
 {
-  GST_INFO_OBJECT (fc, "clearing buffers, peace");
   g_mutex_lock (&fc->lock);
   fc->wait_flush_start = TRUE;
   g_sequence_free (fc->buffers);
@@ -174,8 +173,8 @@ _make_room (GstFrameCache *fc)
   if (fc->requested_segment.position + DEFAULT_DURATION < _get_iter_pts (last))
     return FALSE;
 
-  if (interval > DEFAULT_DURATION) {
-    _free_buffers (fc, _get_iter_pts (last) - DEFAULT_DURATION, TRUE);
+  if (interval > DEFAULT_DURATION * 2) {
+    _free_buffers (fc, _get_iter_pts (last) - DEFAULT_DURATION * 2, TRUE);
   }
 
   return TRUE;
