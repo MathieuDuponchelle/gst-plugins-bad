@@ -125,6 +125,7 @@ _clear_buffers (GstFrameCache * fc)
 {
   GST_INFO_OBJECT (fc, "clearing buffers, peace");
   g_mutex_lock (&fc->lock);
+  fc->wait_flush_start = TRUE;
   g_sequence_free (fc->buffers);
   fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
   g_mutex_unlock (&fc->lock);
@@ -157,11 +158,14 @@ _make_room (GstFrameCache *fc)
   GSequenceIter *last = g_sequence_get_end_iter (fc->buffers);
   GstClockTimeDiff interval;
 
+  GST_DEBUG_OBJECT (fc, "making room");
   last = g_sequence_iter_prev (last);
 
   if (g_sequence_iter_is_end (first))
     return TRUE;
 
+  GST_DEBUG_OBJECT (fc, "first : %" GST_TIME_FORMAT, GST_TIME_ARGS (_get_iter_pts (first)));
+  GST_DEBUG_OBJECT (fc, "last : %" GST_TIME_FORMAT, GST_TIME_ARGS (_get_iter_pts (last)));
   interval = _get_iter_pts (last) - _get_iter_pts (first);
 
   if (fc->requested_segment.position + DEFAULT_DURATION < _get_iter_pts (last))
@@ -453,7 +457,16 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 
   GST_DEBUG ("chaining %" GST_PTR_FORMAT, buffer);
 
+  if (fc->passthrough == TRUE)
+    return gst_pad_push (fc->srcpad, buffer);
+
   g_mutex_lock (&fc->lock);
+  if (fc->wait_flush_start) {
+    GST_INFO ("returning flushing bye");
+    g_mutex_unlock (&fc->lock);
+    return GST_FLOW_FLUSHING;
+  }
+
   cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
   fc->current_position = GST_BUFFER_PTS (buffer);
 
@@ -513,6 +526,7 @@ gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       }
       break;
     case GST_EVENT_FLUSH_START:
+      fc->wait_flush_start = FALSE;
     case GST_EVENT_FLUSH_STOP:
       gst_event_unref (event);
       event = NULL;
