@@ -610,7 +610,6 @@ gst_frame_cache_init (GstFrameCache * fc)
       gst_frame_cache_src_activate_mode);
 
   fc->passthrough = TRUE;
-  fc->send_events = TRUE;
   fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
   fc->current_position = GST_CLOCK_TIME_NONE;
   fc->start = GST_CLOCK_TIME_NONE;
