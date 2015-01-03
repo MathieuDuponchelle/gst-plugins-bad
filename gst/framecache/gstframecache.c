@@ -105,6 +105,19 @@ done:
   return iter;
 }
 
+static gint
+search_events (gconstpointer data, gconstpointer cmp_data, gpointer unused)
+{
+  GstClockTime searched = *(GstClockTime *) cmp_data;
+  GstClockTime compared = ((EventList *) data)->timestamp;
+
+  if (compared < searched)
+    return -1;
+  else if (compared == searched)
+    return 0;
+  return 1;
+}
+
 static GstBuffer *
 _get_cached_buffer (GstFrameCache * fc, GstClockTime position)
 {
@@ -115,6 +128,27 @@ _get_cached_buffer (GstFrameCache * fc, GstClockTime position)
     return g_sequence_get (iter);
 
   return NULL;
+}
+
+static EventList *
+_get_cached_events (GstFrameCache * fc, GstClockTime position)
+{
+  EventList *events = NULL;
+  GSequenceIter *iter;
+
+  iter = g_sequence_search (fc->events, &position, search_events, NULL);
+
+  if (g_sequence_iter_is_begin (iter))
+    return NULL;
+
+  iter = g_sequence_iter_prev (iter);
+  if (!g_sequence_iter_is_end (iter)) {
+    events = g_sequence_get (iter);
+    goto done;
+  }
+
+done:
+  return events;
 }
 
 static gboolean
@@ -129,7 +163,9 @@ _clear_buffers (GstFrameCache * fc)
   g_mutex_lock (&fc->lock);
   fc->wait_flush_start = TRUE;
   g_sequence_free (fc->buffers);
+  g_sequence_free (fc->events);
   fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
+  fc->events = g_sequence_new (NULL);
   g_mutex_unlock (&fc->lock);
   fc->segment_done = TRUE;
 }
@@ -141,7 +177,8 @@ _get_iter_pts (GSequenceIter * iter)
 }
 
 static void
-_free_buffers (GstFrameCache *fc, GstClockTime position, gboolean forward) {
+_free_buffers (GstFrameCache *fc, GstClockTime position, gboolean forward)
+{
   GSequenceIter *iter = _get_cached_iter (fc, position);
 
   if (forward) {
@@ -219,6 +256,7 @@ _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
     g_mutex_unlock (&fc->buffer_lock);
     gst_pad_pause_task (fc->srcpad);
     fc->send_events = TRUE;
+    fc->sent_events = NULL;
     gst_pad_push_event (fc->srcpad, gst_event_new_flush_stop (TRUE));
     fc->running = TRUE;
     gst_pad_start_task (fc->srcpad, (GstTaskFunction) gst_frame_cache_loop,
@@ -256,6 +294,7 @@ _do_seek (GstFrameCache * fc, GstPad * pad, GstEvent * event)
     _clear_buffers (fc);
     fc->start = start;
     fc->stop = start;
+    GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
     fc->requested_segment.position = start;
   }
 
@@ -321,6 +360,27 @@ gst_frame_cache_set_property (GObject * object, guint property_id,
   }
 }
 
+static gboolean
+_check_serialized_events (GstFrameCache *fc, GstClockTime position)
+{
+  EventList *events;
+  GList *tmp;
+
+  events = _get_cached_events (fc, position);
+  if (events == fc->sent_events)
+    return TRUE;
+
+  fc->sent_events = events;
+  for (tmp = events->events; tmp; tmp = tmp->next)
+  {
+    GST_ERROR ("pushing %" GST_PTR_FORMAT, GST_EVENT (tmp->data));
+    if (!gst_pad_push_event (fc->srcpad, gst_event_ref (tmp->data)))
+      return FALSE;
+  }
+
+  return TRUE;
+}
+
 static void
 gst_frame_cache_loop (GstFrameCache * fc)
 {
@@ -328,10 +388,8 @@ gst_frame_cache_loop (GstFrameCache * fc)
   GstSegment *actual_segment;
   GstFlowReturn ret;
 
-
   if (fc->send_events == TRUE)
   {
-    gst_pad_push_event (fc->srcpad, gst_event_new_caps (fc->sinkcaps));
     actual_segment = gst_segment_copy (&fc->requested_segment);
     actual_segment->start = fc->requested_segment.start;
     actual_segment->time = actual_segment->start;
@@ -347,7 +405,14 @@ gst_frame_cache_loop (GstFrameCache * fc)
   g_mutex_unlock (&fc->lock);
 
   while (buffer) {
+
     GstClockTime new_pos = GST_BUFFER_PTS (buffer) + GST_BUFFER_DURATION (buffer);
+
+    if (!_check_serialized_events (fc, GST_BUFFER_PTS (buffer))) {
+      gst_pad_pause_task (fc->srcpad);
+      break;
+    }
+
     GST_DEBUG_OBJECT (fc, "pushing buffer %" GST_PTR_FORMAT, buffer);
     ret = gst_pad_push (fc->srcpad, buffer);
     GST_DEBUG_OBJECT (fc, "pushed buffer, ret is %s", gst_flow_get_name (ret));
@@ -465,6 +530,20 @@ compare_buffers (gconstpointer new_buf, gconstpointer cmp_buf,
   return 1;
 }
 
+static gint
+compare_events_list (gconstpointer new_list, gconstpointer cmp_list,
+    gpointer user_data)
+{
+  GstClockTime new_pts = ((EventList *) new_list)->timestamp;
+  GstClockTime cmp_pts = ((EventList *) new_list)->timestamp;
+
+  if (new_pts < cmp_pts)
+    return -1;
+  else if (new_pts == cmp_pts)
+    return 0;
+  return 1;
+}
+
 static GstFlowReturn
 gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 {
@@ -484,10 +563,16 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
   }
 
   cached = _get_cached_iter (fc, GST_BUFFER_PTS (buffer));
-  fc->current_position = GST_BUFFER_PTS (buffer);
 
   if (cached != NULL) {
     g_sequence_remove (cached);
+  }
+
+  if (fc->pending_events) {
+    GST_ERROR ("inserting at timestamp %" GST_TIME_FORMAT, GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
+    fc->pending_events->timestamp = GST_BUFFER_PTS (buffer);
+    g_sequence_insert_sorted (fc->events, fc->pending_events, compare_events_list, NULL);
+    fc->pending_events = NULL;
   }
 
   g_sequence_insert_sorted (fc->buffers, buffer, compare_buffers, NULL);
@@ -502,29 +587,31 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 static gboolean
 gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
-  GstCaps *caps;
   GstFrameCache *fc = GST_FRAME_CACHE (parent);
 
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_CAPS:
-      gst_event_parse_caps (event, &caps);
-      GST_DEBUG_OBJECT (pad, "received caps %" GST_PTR_FORMAT, caps);
-      GST_FRAME_CACHE (parent)->sinkcaps = gst_caps_copy (caps);
+      g_mutex_lock (&fc->lock);
+      if (!fc->pending_events)
+        fc->pending_events = g_malloc0 (sizeof (EventList));
+      fc->pending_events->events = g_list_append (fc->pending_events->events, gst_event_ref (event));
+      g_mutex_unlock (&fc->lock);
       if (fc->passthrough == FALSE) {
-        gst_event_unref (event);
         event = NULL;
       }
       break;
     case GST_EVENT_SEGMENT:
       if (fc->passthrough == FALSE) {
         gst_event_copy_segment (event, &fc->current_segment);
-        GST_INFO_OBJECT (fc, "got a segment %" GST_PTR_FORMAT, event);
+        GST_ERROR_OBJECT (fc, "got a segment %" GST_PTR_FORMAT, event);
         if (!GST_CLOCK_TIME_IS_VALID (fc->start)
             || fc->start > fc->current_segment.start)
           fc->start = fc->current_segment.start;
         if (!GST_CLOCK_TIME_IS_VALID (fc->stop)
-            || fc->stop < fc->current_segment.stop)
+            || fc->stop < fc->current_segment.stop) {
           fc->stop = fc->current_segment.stop;
+          GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
+        }
         if (fc->current_segment.start + DEFAULT_LOOKAHEAD_DURATION > fc->stop)
           fc->forward_done = TRUE;
         else
@@ -552,7 +639,7 @@ gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
   }
 
   if (event) {
-    GST_INFO ("pushing %" GST_PTR_FORMAT, event);
+    GST_ERROR ("pushing %" GST_PTR_FORMAT, event);
     return gst_pad_push_event (fc->srcpad, event);
   }
   else
@@ -611,9 +698,10 @@ gst_frame_cache_init (GstFrameCache * fc)
 
   fc->passthrough = TRUE;
   fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
-  fc->current_position = GST_CLOCK_TIME_NONE;
+  fc->events = g_sequence_new (NULL);
   fc->start = GST_CLOCK_TIME_NONE;
   fc->stop = GST_CLOCK_TIME_NONE;
+  GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
   gst_segment_init (&fc->requested_segment, GST_FORMAT_TIME);
 }
 
