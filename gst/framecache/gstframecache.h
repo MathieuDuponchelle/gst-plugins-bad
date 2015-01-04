@@ -97,6 +97,8 @@ struct _GstFrameCache
 
   /* What upstream currently sends us */
   GstSegment current_segment;
+
+  gint seek_seqnum;
 };
 
 struct _GstFrameCacheClass

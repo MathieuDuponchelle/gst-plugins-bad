@@ -168,6 +168,7 @@ _clear_buffers (GstFrameCache * fc)
   fc->events = g_sequence_new (NULL);
   g_mutex_unlock (&fc->lock);
   fc->segment_done = TRUE;
+  fc->forward_done = FALSE;
 }
 
 static GstClockTime
@@ -227,16 +228,19 @@ _update_buffers (GstFrameCache * fc)
   }
 
   if (fc->forward_done == FALSE && fc->segment_done == TRUE) {
+    gboolean ret;
     GstClockTime stop = fc->stop + DEFAULT_LOOKAHEAD_DURATION;
 
     if (GST_CLOCK_TIME_IS_VALID (fc->requested_segment.stop))
       stop = MIN (stop, fc->requested_segment.stop);
-    fc->segment_done = FALSE;
     event = gst_event_new_seek (1.0, GST_FORMAT_TIME,
         GST_SEEK_FLAG_KEY_UNIT | GST_SEEK_FLAG_SNAP_BEFORE | GST_SEEK_FLAG_FLUSH,
         GST_SEEK_TYPE_SET, fc->stop, GST_SEEK_TYPE_SET, stop);
+    fc->stop = stop;
     GST_INFO_OBJECT (fc, "pushing %" GST_PTR_FORMAT, event);
-    gst_pad_event_default (fc->srcpad, GST_OBJECT (fc), event);
+    ret = gst_pad_event_default (fc->srcpad, GST_OBJECT (fc), event);
+    if (ret)
+      fc->segment_done = FALSE;
   } else if (fc->forward_done == TRUE) {
     GST_INFO_OBJECT (fc, "I'm done filling up forward bye");
   }
@@ -248,7 +252,11 @@ static void
 _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
 {
   if (flush) {
-    gst_pad_push_event (fc->srcpad, gst_event_new_flush_start ());
+    GstEvent *event;
+
+    event = gst_event_new_flush_start ();
+    gst_event_set_seqnum (event, fc->seek_seqnum);
+    gst_pad_push_event (fc->srcpad, event);
 
     g_mutex_lock (&fc->buffer_lock);
     fc->running = FALSE;
@@ -257,7 +265,9 @@ _broadcast_src_pad (GstFrameCache * fc, gboolean flush)
     gst_pad_pause_task (fc->srcpad);
     fc->send_events = TRUE;
     fc->sent_events = NULL;
-    gst_pad_push_event (fc->srcpad, gst_event_new_flush_stop (TRUE));
+    event = gst_event_new_flush_stop (TRUE);
+    gst_event_set_seqnum (event, fc->seek_seqnum);
+    gst_pad_push_event (fc->srcpad, event);
     fc->running = TRUE;
     gst_pad_start_task (fc->srcpad, (GstTaskFunction) gst_frame_cache_loop,
       fc, NULL);
@@ -281,12 +291,8 @@ _do_seek (GstFrameCache * fc, GstPad * pad, GstEvent * event)
       &stop_type, &stop);
   gst_segment_do_seek (&fc->requested_segment, rate, format, flags, start_type,
       start, stop_type, stop, &update);
+  fc->seek_seqnum = gst_event_get_seqnum (event);
   gst_event_unref (event);
-
-  if (fc->passthrough == TRUE) {
-    gst_pad_push_event (pad, gst_event_new_flush_start ());
-    gst_pad_push_event (pad, gst_event_new_flush_stop (TRUE));
-  }
 
   fc->passthrough = FALSE;
 
@@ -294,7 +300,6 @@ _do_seek (GstFrameCache * fc, GstPad * pad, GstEvent * event)
     _clear_buffers (fc);
     fc->start = start;
     fc->stop = start;
-    GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
     fc->requested_segment.position = start;
   }
 
@@ -373,7 +378,6 @@ _check_serialized_events (GstFrameCache *fc, GstClockTime position)
   fc->sent_events = events;
   for (tmp = events->events; tmp; tmp = tmp->next)
   {
-    GST_ERROR ("pushing %" GST_PTR_FORMAT, GST_EVENT (tmp->data));
     if (!gst_pad_push_event (fc->srcpad, gst_event_ref (tmp->data)))
       return FALSE;
   }
@@ -390,11 +394,13 @@ gst_frame_cache_loop (GstFrameCache * fc)
 
   if (fc->send_events == TRUE)
   {
+    GstEvent *event;
     actual_segment = gst_segment_copy (&fc->requested_segment);
     actual_segment->start = fc->requested_segment.start;
     actual_segment->time = actual_segment->start;
-    GST_INFO ("pushing segment %" GST_SEGMENT_FORMAT, actual_segment);
-    gst_pad_push_event (fc->srcpad, gst_event_new_segment (actual_segment));
+    event = gst_event_new_segment (actual_segment);
+    gst_event_set_seqnum (event, fc->seek_seqnum);
+    gst_pad_push_event (fc->srcpad, event);
     fc->send_events = FALSE;
   }
 
@@ -413,7 +419,7 @@ gst_frame_cache_loop (GstFrameCache * fc)
       break;
     }
 
-    GST_DEBUG_OBJECT (fc, "pushing buffer %" GST_PTR_FORMAT, buffer);
+    GST_DEBUG_OBJECT (fc, "pushing buffer %" GST_PTR_FORMAT "fc stop is %" GST_TIME_FORMAT, buffer, GST_TIME_ARGS (fc->stop));
     ret = gst_pad_push (fc->srcpad, buffer);
     GST_DEBUG_OBJECT (fc, "pushed buffer, ret is %s", gst_flow_get_name (ret));
 
@@ -424,6 +430,15 @@ gst_frame_cache_loop (GstFrameCache * fc)
     }
 
     fc->requested_segment.position = new_pos;
+    if (GST_CLOCK_TIME_IS_VALID (fc->requested_segment.stop) && new_pos >= fc->requested_segment.stop) {
+      GstEvent *event;
+      GST_INFO_OBJECT (fc,"pushing EOS nao with seqnum %d", fc->seek_seqnum);
+      event = gst_event_new_eos ();
+      gst_event_set_seqnum (event, fc->seek_seqnum);
+      gst_pad_push_event (fc->srcpad, event);
+      gst_pad_pause_task (fc->srcpad);
+      break;
+    }
     g_mutex_lock (&fc->lock);
     buffer = _get_cached_buffer (fc, fc->requested_segment.position);
     if (buffer)
@@ -442,6 +457,24 @@ gst_frame_cache_loop (GstFrameCache * fc)
   }
   g_cond_wait (&fc->buffer_cond, &fc->buffer_lock);
   g_mutex_unlock (&fc->buffer_lock);
+}
+
+static void
+_reset_framecache (GstFrameCache *fc)
+{
+  g_mutex_lock (&fc->lock);
+  fc->wait_flush_start = TRUE;
+  g_sequence_free (fc->buffers);
+  g_sequence_free (fc->events);
+  fc->buffers = g_sequence_new ((GDestroyNotify) gst_buffer_unref);
+  fc->events = g_sequence_new (NULL);
+  g_mutex_unlock (&fc->lock);
+  fc->segment_done = TRUE;
+  fc->forward_done = FALSE;
+  fc->passthrough = TRUE;
+  fc->start = GST_CLOCK_TIME_NONE;
+  fc->stop = GST_CLOCK_TIME_NONE;
+  gst_segment_init (&fc->requested_segment, GST_FORMAT_TIME);
 }
 
 static GstStateChangeReturn
@@ -471,6 +504,7 @@ gst_frame_cache_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
+      _reset_framecache (fc);
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
       break;
@@ -550,14 +584,14 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
   GstFrameCache *fc = GST_FRAME_CACHE (parent);
   GSequenceIter *cached;
 
-  GST_DEBUG ("chaining %" GST_PTR_FORMAT, buffer);
+  GST_DEBUG_OBJECT (fc,"chaining %" GST_PTR_FORMAT, buffer);
 
   if (fc->passthrough == TRUE)
     return gst_pad_push (fc->srcpad, buffer);
 
   g_mutex_lock (&fc->lock);
   if (fc->wait_flush_start) {
-    GST_INFO ("returning flushing bye");
+    GST_INFO_OBJECT (fc,"returning flushing bye");
     g_mutex_unlock (&fc->lock);
     return GST_FLOW_FLUSHING;
   }
@@ -569,7 +603,6 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
   }
 
   if (fc->pending_events) {
-    GST_ERROR ("inserting at timestamp %" GST_TIME_FORMAT, GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
     fc->pending_events->timestamp = GST_BUFFER_PTS (buffer);
     g_sequence_insert_sorted (fc->events, fc->pending_events, compare_events_list, NULL);
     fc->pending_events = NULL;
@@ -577,7 +610,7 @@ gst_frame_cache_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 
   g_sequence_insert_sorted (fc->buffers, buffer, compare_buffers, NULL);
   g_mutex_unlock (&fc->lock);
-  GST_DEBUG ("cached buffer");
+  GST_DEBUG_OBJECT (fc,"cached buffer");
 
   _broadcast_src_pad (fc, FALSE);
 
@@ -603,25 +636,19 @@ gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
     case GST_EVENT_SEGMENT:
       if (fc->passthrough == FALSE) {
         gst_event_copy_segment (event, &fc->current_segment);
-        GST_ERROR_OBJECT (fc, "got a segment %" GST_PTR_FORMAT, event);
         if (!GST_CLOCK_TIME_IS_VALID (fc->start)
             || fc->start > fc->current_segment.start)
           fc->start = fc->current_segment.start;
-        if (!GST_CLOCK_TIME_IS_VALID (fc->stop)
-            || fc->stop < fc->current_segment.stop) {
-          fc->stop = fc->current_segment.stop;
-          GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
-        }
-        if (fc->current_segment.start + DEFAULT_LOOKAHEAD_DURATION > fc->stop)
-          fc->forward_done = TRUE;
-        else
-          fc->forward_done = FALSE;
         gst_event_unref (event);
         event = NULL;
       }
       break;
     case GST_EVENT_EOS:
       if (fc->passthrough == FALSE) {
+        if (fc->current_segment.start + DEFAULT_LOOKAHEAD_DURATION > fc->stop)
+          fc->forward_done = TRUE;
+        else
+          fc->forward_done = FALSE;
         fc->segment_done = TRUE;
         g_idle_add((GSourceFunc) _update_buffers, fc);
         gst_event_unref (event);
@@ -634,12 +661,13 @@ gst_frame_cache_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       gst_event_unref (event);
       event = NULL;
       break;
+    case GST_EVENT_TAG:
+      event = NULL;
     default:
       break;
   }
 
   if (event) {
-    GST_ERROR ("pushing %" GST_PTR_FORMAT, event);
     return gst_pad_push_event (fc->srcpad, event);
   }
   else
@@ -701,7 +729,6 @@ gst_frame_cache_init (GstFrameCache * fc)
   fc->events = g_sequence_new (NULL);
   fc->start = GST_CLOCK_TIME_NONE;
   fc->stop = GST_CLOCK_TIME_NONE;
-  GST_ERROR ("fc stop is now : %" GST_TIME_FORMAT, GST_TIME_ARGS (fc->stop));
   gst_segment_init (&fc->requested_segment, GST_FORMAT_TIME);
 }
 
