@@ -2958,6 +2958,13 @@ AG_GST_CHECK_FEATURE(X265, [x265 plug-in], x265, [
   AG_GST_PKG_CHECK_MODULES(X265, x265)
 ])
 
+dnl *** Vapoursynth ***
+translit(dnm, m, l) AM_CONDITIONAL(USE_VAPOURSYNTH, true)
+AG_GST_CHECK_FEATURE(VAPOURSYNTH, [Vapoursynth plugin], vapoursynth, [
+  AG_GST_PKG_CHECK_MODULES(VAPOURSYNTH, vapoursynth >= 26)
+])
+
+
 else
 
 dnl not building plugins with external dependencies,
@@ -3042,6 +3049,7 @@ AM_CONDITIONAL(USE_WEBP, false)
 AM_CONDITIONAL(USE_OPENH264, false)
 AM_CONDITIONAL(USE_X265, false)
 AM_CONDITIONAL(USE_DTLS, false)
+AM_CONDITIONAL(USE_VAPOURSYNTH, false)
 
 fi dnl of EXT plugins
 
@@ -3335,6 +3343,7 @@ ext/gsettings/Makefile
 ext/gsettings/org.freedesktop.gstreamer.default-elements.gschema.xml
 ext/spc/Makefile
 ext/timidity/Makefile
+ext/vapoursynth/Makefile
 ext/webp/Makefile
 ext/x265/Makefile
 ext/xvid/Makefile

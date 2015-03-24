@@ -10,6 +10,12 @@ else
 VOAMRWBENC_DIR =
 endif
 
+if USE_VAPOURSYNTH
+VAPOURSYNTH_DIR = vapoursynth
+else
+VAPOURSYNTH_DIR = 
+endif
+
 if USE_APEXSINK
 APEXSINK_DIR = apexsink
 else
@@ -422,6 +428,7 @@ SUBDIRS=\
 	$(VOAACENC_DIR) \
 	$(ASSRENDER_DIR) \
 	$(VOAMRWBENC_DIR) \
+	$(VAPOURSYNTH_DIR) \
 	$(APEXSINK_DIR) \
 	$(AUDIOFILE_DIR) \
 	$(BS2B_DIR) \
