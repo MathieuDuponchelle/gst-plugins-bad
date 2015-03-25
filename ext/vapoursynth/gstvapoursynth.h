@@ -21,8 +21,10 @@
 #define __GST_VAPOURSYNTH_H__
 
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <VapourSynth.h>
+#include <VSHelper.h>
 
 G_BEGIN_DECLS
 #define GST_VAPOURSYNTH(obj) \
@@ -66,9 +68,21 @@ struct _GstVapourSynthPropertyDef{
 struct _GstVapourSynth {
   GstElement parent;
 
-  VSMap *invokeres;
+  GstPad *sinkpad, *srcpad;
+
+  /* Our fake input filter */
   VSNodeRef *inputfilter;
+  /* The actual vapoursynth filter we're wrapping */
+  VSNodeRef *actualfilter;
+
+  GstVideoInfo gstvideoinfo;
   VSVideoInfo vi;
+  const VSVideoInfo *out_vi;
+  GstVideoInfo outvideoinfo;
+
+  GList *pending_buffers;
+  guint out_frame_counter;
+  
   GstStructure *properties;
 };
 

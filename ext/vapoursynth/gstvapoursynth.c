@@ -62,7 +62,6 @@ gst_vapoursynth_input_filter_init (VSMap * in, VSMap * out, void **instanceData,
   debug_vs_map (out);
 
   vsapi->setVideoInfo (&self->vi, 1, node);
-  /* Create the filter */
 }
 
 static const VSFrameRef *
@@ -70,11 +69,55 @@ gst_vapoursynth_input_filter_get_frame (int n, int activationReason,
     void **instanceData, void **frameData, VSFrameContext * frameCtx,
     VSCore * core, const VSAPI * vsapi)
 {
+  VSFrameRef *retframe = NULL;
   GstVapourSynth *self = (GstVapourSynth *) * instanceData;
+  GstVideoFrame vframe;
+  GList *tmp;
+  GstBuffer *input;
+  guint i;
+
   GST_DEBUG_OBJECT (self,
       "n:%d, activationReason:%d, frameData:%p, frameCtx:%p", n,
       activationReason, frameData, frameCtx);
-  return NULL;
+
+  if (self->pending_buffers == NULL) {
+    GST_ERROR_OBJECT (self, "No input buffers !");
+    goto beach;
+  }
+  tmp = self->pending_buffers;
+  input = (GstBuffer *) tmp->data;
+  self->pending_buffers = g_list_remove_link (self->pending_buffers, tmp);
+  g_list_free (tmp);
+
+  retframe =
+      vsapi->newVideoFrame (self->vi.format, self->vi.width, self->vi.height,
+      NULL, core);
+  if (retframe == NULL) {
+    GST_ERROR_OBJECT (self, "Failed to create a VSFrame");
+    goto beach;
+  }
+
+  if (!gst_video_frame_map (&vframe, &self->gstvideoinfo, input, GST_MAP_READ)) {
+    GST_ERROR_OBJECT (self, "Failed to map input buffer");
+    vsapi->freeFrame (retframe);
+    retframe = NULL;
+    goto beach;
+  }
+
+  /* Copy input data into retframe */
+  for (i = 0; i < self->vi.format->numPlanes; i++) {
+    guint8 *writeptr = vsapi->getWritePtr (retframe, i);
+    gint writestride = vsapi->getStride (retframe, i);
+    vs_bitblt (writeptr, writestride, GST_VIDEO_FRAME_PLANE_DATA (&vframe, i),
+        GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, i),
+        GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, i),
+        vsapi->getFrameHeight (retframe, i));
+  }
+  gst_video_frame_unmap (&vframe);
+  GST_DEBUG_OBJECT (self, "Done");
+
+beach:
+  return retframe;
 }
 
 static void
@@ -263,6 +306,7 @@ gst_vapoursynth_class_init (GstVapourSynthClass * klass,
   GObjectClass *gobject_class = (GObjectClass *) klass;
   GstElementClass *gstelement_class = (GstElementClass *) klass;
   gchar *longname;
+  GstPadTemplate *templ;
 
   klass->plugin_ns = klass_data->plugin_ns;
   klass->func_name = klass_data->func_name;
@@ -285,49 +329,235 @@ gst_vapoursynth_class_init (GstVapourSynthClass * klass,
 
   extract_property_information (klass);
   install_properties (klass);
+
   /* FIXME : Add pad templates */
-  /* To figure out the pad templates, we need to probe the
+  /* To figure out the pad templates, we should to probe the
    * filter with a whole range of input formats to see
    * which ones are accepted
    * The problem is going to arise with filters that will also
    * check other property values when creating them :( */
+  templ =
+      gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
+      gst_caps_from_string ("video/x-raw,format={I420}"));
+  gst_element_class_add_pad_template (gstelement_class, templ);
+  templ =
+      gst_pad_template_new ("sink", GST_PAD_SINK, GST_PAD_ALWAYS,
+      gst_caps_from_string ("video/x-raw,format={I420}"));
+  gst_element_class_add_pad_template (gstelement_class, templ);
 }
 
-static void
-gst_vapoursynth_init (GstVapourSynth * object)
+static GstFlowReturn
+gst_vapoursynth_push_buffer (GstVapourSynth * self, const VSFrameRef * frameref)
 {
-  GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (object);
+  GstFlowReturn ret = GST_FLOW_OK;
+  GstBuffer *outbuf;
+  GstVideoFrame vframe;
+  guint i;
+
+  if (self->out_vi == NULL) {
+    GstVideoFormat out_format;
+    GstCaps *caps;
+    self->out_vi = vsapi->getVideoInfo (self->actualfilter);
+    GST_LOG_OBJECT (self, "Creating output caps");
+    gst_video_info_init (&self->outvideoinfo);
+    switch (self->out_vi->format->id) {
+      case pfYUV420P8:
+        out_format = GST_VIDEO_FORMAT_I420;
+        break;
+      default:
+        GST_ERROR_OBJECT (self, "Unknown output vsformat %d",
+            self->out_vi->format->id);
+        ret = GST_FLOW_NOT_NEGOTIATED;
+        goto beach;
+    }
+    gst_video_info_set_format (&self->outvideoinfo, out_format,
+        self->out_vi->width, self->out_vi->height);
+    self->outvideoinfo.fps_n = self->out_vi->fpsNum;
+    self->outvideoinfo.fps_d = self->out_vi->fpsDen;
+    caps = gst_video_info_to_caps (&self->outvideoinfo);
+    gst_pad_set_caps (self->srcpad, caps);
+  }
+
+  outbuf =
+      gst_buffer_new_allocate (NULL, GST_VIDEO_INFO_SIZE (&self->outvideoinfo),
+      NULL);
+  gst_video_frame_map (&vframe, &self->outvideoinfo, outbuf, GST_MAP_WRITE);
+  for (i = 0; i < self->out_vi->format->numPlanes; i++) {
+    vs_bitblt (GST_VIDEO_FRAME_PLANE_DATA (&vframe, i),
+        GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, i),
+        vsapi->getReadPtr (frameref, i),
+        vsapi->getStride (frameref, i),
+        vsapi->getStride (frameref, i), vsapi->getFrameHeight (frameref, i));
+  }
+  gst_video_frame_unmap (&vframe);
+
+  ret = gst_pad_push (self->srcpad, outbuf);
+beach:
+  return ret;
+}
+
+static GstFlowReturn
+gst_vapoursynth_chain (GstPad * pad, GstVapourSynth * self, GstBuffer * buffer)
+{
+  GstFlowReturn ret = GST_FLOW_OK;
+  const VSFrameRef *frameref;
+
+  /* FIXME IMPLEMENT */
+  self->pending_buffers = g_list_append (self->pending_buffers, buffer);
+
+  frameref =
+      vsapi->getFrame (self->out_frame_counter++, self->actualfilter, NULL, 40);
+  if (frameref == NULL) {
+    GST_ERROR_OBJECT (self, "Call to getFrame() returned nothing !");
+    return GST_FLOW_ERROR;
+  }
+
+  GST_DEBUG_OBJECT (self, "Yay, got a frame back \\o/");
+  ret = gst_vapoursynth_push_buffer (self, frameref);
+
+  return ret;
+}
+
+static gboolean
+gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * caps)
+{
+  GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (self);
+  gboolean ret = FALSE;
   VSMap *map = vsapi->createMap ();
-  guint i, nb;
   const gchar *errstr = NULL;
   gint errnum;
   VSMap *in = vsapi->createMap ();
   VSMap *out = vsapi->createMap ();
+  VSMap *invokeres;
 
+  GST_DEBUG_OBJECT (self, "caps %" GST_PTR_FORMAT, caps);
+
+  /* 1. Convert caps to VSVideoInfo */
+  gst_video_info_init (&self->gstvideoinfo);
+  if (!gst_video_info_from_caps (&self->gstvideoinfo, caps)) {
+    GST_ERROR_OBJECT (self, "Can't get video info from caps %" GST_PTR_FORMAT,
+        caps);
+    goto beach;
+  }
+  switch (GST_VIDEO_INFO_FORMAT (&self->gstvideoinfo)) {
+    case GST_VIDEO_FORMAT_I420:
+      self->vi.format = vsapi->getFormatPreset (pfYUV420P8, vscore);
+      break;
+    default:
+      GST_ERROR_OBJECT (self, "UNHANDLED FORMAT '%s'",
+          gst_video_format_to_string (GST_VIDEO_INFO_FORMAT
+              (&self->gstvideoinfo)));
+      goto beach;
+  }
+  self->vi.fpsNum = self->gstvideoinfo.fps_n;
+  self->vi.fpsDen = self->gstvideoinfo.fps_d;
+  self->vi.width = self->gstvideoinfo.width;
+  self->vi.height = self->gstvideoinfo.height;
+  self->vi.numFrames = 0;
+
+  /* 2. Create input filter and invoke function on it */
   /* FIXME : Create the input filter when new caps are set on a pad
    * so that we have the video info */
   /* Create the fake input node */
   vsapi->createFilter (in, out, "BOGUSINPUT",
       gst_vapoursynth_input_filter_init,
       gst_vapoursynth_input_filter_get_frame,
-      gst_vapoursynth_input_filter_free, fmUnordered, 0, object, vscore);
+      gst_vapoursynth_input_filter_free, fmUnordered, 0, self, vscore);
 
-  object->inputfilter = vsapi->propGetNode (out, "clip", 0, &errnum);
-  g_assert (object->inputfilter);
+  GST_DEBUG_OBJECT (self, "Created input filter");
+  debug_vs_map (in);
+  debug_vs_map (out);
+  vsapi->freeMap (in);
 
-  vsapi->propSetNode (map, "clip", object->inputfilter, 0);
+  GST_DEBUG_OBJECT (self, "Getting corresponding node");
+  self->inputfilter = vsapi->propGetNode (out, "clip", 0, &errnum);
+  vsapi->freeMap (out);
+  if (self->inputfilter == NULL) {
+    GST_ERROR_OBJECT (self, "Failed to create input filter");
+    goto beach;
+  }
 
-  object->invokeres = vsapi->invoke (klass->vsplugin, klass->func_name, map);
-  errstr = vsapi->getError (object->invokeres);
+  /* Set our input filter as the input of the filter we want to use */
+  vsapi->propSetNode (map, "clip", self->inputfilter, 0);
+
+  invokeres = vsapi->invoke (klass->vsplugin, klass->func_name, map);
+  errstr = vsapi->getError (invokeres);
   if (errstr) {
-    GST_ERROR_OBJECT (object, "Error when invoking function : %s", errstr);
+    GST_ERROR_OBJECT (self, "Error when invoking function : %s", errstr);
+    goto beach;
   }
-  nb = vsapi->propNumKeys (object->invokeres);
-  GST_DEBUG ("result %d", nb);
-  for (i = 0; i < nb; i++) {
-    const gchar *key = vsapi->propGetKey (object->invokeres, i);
-    GST_DEBUG ("key #%d : %s", i, key);
+
+  self->actualfilter = vsapi->propGetNode (invokeres, "clip", 0, &errnum);
+
+  GST_DEBUG ("invokeres");
+  debug_vs_map (invokeres);
+  GST_DEBUG ("map");
+  debug_vs_map (map);
+  vsapi->freeMap (invokeres);
+
+  ret = TRUE;
+
+beach:
+  return ret;
+}
+
+static gboolean
+gst_vapoursynth_src_event (GstPad * pad, GstVapourSynth * self,
+    GstEvent * event)
+{
+  gboolean ret = FALSE;
+
+  switch (GST_EVENT_TYPE (event)) {
+    default:
+      ret = gst_pad_event_default (pad, (GstObject *) self, event);
   }
+  return ret;
+}
+
+static gboolean
+gst_vapoursynth_sink_event (GstPad * pad, GstVapourSynth * self,
+    GstEvent * event)
+{
+  gboolean ret = FALSE;
+
+  switch (GST_EVENT_TYPE (event)) {
+    case GST_EVENT_CAPS:
+    {
+      GstCaps *caps;
+      gst_event_parse_caps (event, &caps);
+      ret = gst_vapoursynth_set_caps (self, caps);
+      gst_event_unref (event);
+    }
+    default:
+      ret = gst_pad_event_default (pad, (GstObject *) self, event);
+  }
+  return ret;
+
+  return TRUE;
+}
+
+static void
+gst_vapoursynth_init (GstVapourSynth * object)
+{
+  GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (object);
+  GstElementClass *gstelement_class = (GstElementClass *) klass;
+
+  object->srcpad =
+      gst_pad_new_from_template (gst_element_class_get_pad_template
+      (gstelement_class, "src"), "src");
+  gst_pad_set_event_function (object->srcpad,
+      (GstPadEventFunction) gst_vapoursynth_src_event);
+  gst_element_add_pad ((GstElement *) object, object->srcpad);
+
+  object->sinkpad =
+      gst_pad_new_from_template (gst_element_class_get_pad_template
+      (gstelement_class, "sink"), "sink");
+  gst_pad_set_event_function (object->sinkpad,
+      (GstPadEventFunction) gst_vapoursynth_sink_event);
+  gst_pad_set_chain_function (object->sinkpad,
+      (GstPadChainFunction) gst_vapoursynth_chain);
+  gst_element_add_pad ((GstElement *) object, object->sinkpad);
+
 }
 
 
