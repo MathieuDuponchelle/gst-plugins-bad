@@ -54,6 +54,7 @@ struct _GstVapourSynthPropertyDef{
   gboolean optional;
   /* GStreamer public name */
   gchar *name;
+  GQuark quark;
   /* GStreamer description */
   gchar *desc;
   /* key to use */
@@ -75,15 +76,35 @@ struct _GstVapourSynth {
   /* The actual vapoursynth filter we're wrapping */
   VSNodeRef *actualfilter;
 
+  GstStructure *properties;
+
   GstVideoInfo gstvideoinfo;
   VSVideoInfo vi;
   const VSVideoInfo *out_vi;
   GstVideoInfo outvideoinfo;
 
-  GList *pending_buffers;
+  /* Output buffer counter */
   guint out_frame_counter;
   
-  GstStructure *properties;
+  /* Input buffers */
+  GstBuffer **ringbuffer;
+  /* ring_size: Total ringbuffer size */
+  guint ring_size;
+  /* cache_size: Number of previous buffers to keep around (< ring_size) */
+  guint cache_size;
+
+  /* head : latest write position available, increases everytime
+   * a buffer arrives. head >= tail */
+  guint head;
+  /* tail : earliest buffer available to read */
+  guint tail;
+
+  /* Mutex to protect above values */
+  GMutex ring_mutex;
+  /* Wait for more data */
+  GCond read_cond;
+  /* Wait for more space */
+  GCond write_cond;
 };
 
 struct _GstVapourSynthClass {

@@ -30,6 +30,9 @@
 GST_DEBUG_CATEGORY (vapoursynth_debug);
 #define GST_CAT_DEFAULT vapoursynth_debug
 
+#define DEFAULT_RING_SIZE 6
+#define DEFAULT_CACHE_SIZE 3
+
 /* Class-specific data used at type registration time */
 typedef struct
 {
@@ -72,22 +75,54 @@ gst_vapoursynth_input_filter_get_frame (int n, int activationReason,
   VSFrameRef *retframe = NULL;
   GstVapourSynth *self = (GstVapourSynth *) * instanceData;
   GstVideoFrame vframe;
-  GList *tmp;
   GstBuffer *input;
   guint i;
+  VSMap *frameprops;
 
   GST_DEBUG_OBJECT (self,
       "n:%d, activationReason:%d, frameData:%p, frameCtx:%p", n,
       activationReason, frameData, frameCtx);
 
-  if (self->pending_buffers == NULL) {
-    GST_ERROR_OBJECT (self, "No input buffers !");
-    goto beach;
+  g_mutex_lock (&self->ring_mutex);
+  /* Error out if filter is requesting a very old frame */
+  if (n < self->tail) {
+    GST_ERROR_OBJECT (self,
+        "Filter is asking for a frame we no longer have (n:%d < tail:%d)", n,
+        self->tail);
+    g_mutex_unlock (&self->ring_mutex);
+    return NULL;
   }
-  tmp = self->pending_buffers;
-  input = (GstBuffer *) tmp->data;
-  self->pending_buffers = g_list_remove_link (self->pending_buffers, tmp);
-  g_list_free (tmp);
+
+  /* Do we need to drop old frames ? */
+  while (n > self->cache_size && (n - self->cache_size > self->tail)) {
+    GST_DEBUG_OBJECT (self, "Popping off buffer at tail:%d", self->tail);
+    gst_buffer_unref (self->ringbuffer[self->tail % self->ring_size]);
+    self->ringbuffer[self->tail % self->ring_size] = NULL;
+    self->tail++;
+    g_cond_signal (&self->write_cond);
+  }
+
+  /* While no data is available, or the requested frame still hasn't arrive, wait */
+  while (self->head == self->tail || n > self->head) {
+    GST_DEBUG_OBJECT (self, "Waiting for new buffer (n:%d , head:%d)",
+        n, self->head);
+    g_cond_wait (&self->read_cond, &self->ring_mutex);
+  }
+  /* FIXME : IMPLEMENT FLUSHING/UNLOCK ! */
+  {
+    guint i;
+    GST_DEBUG_OBJECT (self, "head:%d, tail:%d", self->head, self->tail);
+    for (i = 0; i < self->ring_size; i++)
+      GST_DEBUG_OBJECT (self, "#%d : %p", i, self->ringbuffer[i]);
+  }
+  GST_DEBUG_OBJECT (self, "Getting buffer %d", n);
+  input = self->ringbuffer[n % self->ring_size];
+  g_mutex_unlock (&self->ring_mutex);
+
+  if (input == NULL) {
+    GST_ERROR_OBJECT (self, "Buffer is NULL !");
+    return NULL;
+  }
 
   retframe =
       vsapi->newVideoFrame (self->vi.format, self->vi.width, self->vi.height,
@@ -96,6 +131,13 @@ gst_vapoursynth_input_filter_get_frame (int n, int activationReason,
     GST_ERROR_OBJECT (self, "Failed to create a VSFrame");
     goto beach;
   }
+
+  frameprops = vsapi->getFramePropsRW (retframe);
+  /* Set the buffer properties ! */
+  vsapi->propSetFloat (frameprops, "_AbsoluteTime",
+      GST_BUFFER_PTS (input) / (double) GST_SECOND, 0);
+  vsapi->propSetInt (frameprops, "_SARNum", self->gstvideoinfo.par_n, 0);
+  vsapi->propSetInt (frameprops, "_SARDen", self->gstvideoinfo.par_d, 0);
 
   if (!gst_video_frame_map (&vframe, &self->gstvideoinfo, input, GST_MAP_READ)) {
     GST_ERROR_OBJECT (self, "Failed to map input buffer");
@@ -140,6 +182,78 @@ debug_vs_map (VSMap * map)
   }
 }
 
+static GstVapourSynthPropertyDef *
+get_property_def_for_id (GstVapourSynth * self, guint prop_id)
+{
+  GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (self);
+  guint i;
+
+  for (i = 0; klass->properties[i]; i++) {
+    if (klass->properties[i]->registered_type == prop_id)
+      return klass->properties[i];
+  }
+  GST_ERROR_OBJECT (self, "Couldn't find property definition for property #%d",
+      prop_id);
+  return NULL;
+}
+
+static GstVapourSynthPropertyDef *
+get_property_def_for_quark (GstVapourSynth * self, GQuark quark)
+{
+  GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (self);
+  guint i;
+
+  for (i = 0; klass->properties[i]; i++) {
+    if (klass->properties[i]->quark == quark)
+      return klass->properties[i];
+  }
+  GST_ERROR_OBJECT (self, "Couldn't find property definition for quark '%s'",
+      g_quark_to_string (quark));
+  return NULL;
+}
+
+typedef struct
+{
+  VSMap *map;
+  GstVapourSynth *object;
+} PropMapData;
+
+static gboolean
+set_map_argument (GQuark field_id, const GValue * value, PropMapData * data)
+{
+  GstVapourSynthPropertyDef *pdef =
+      get_property_def_for_quark (data->object, field_id);
+
+  if (pdef == NULL)
+    return FALSE;
+  switch (pdef->type) {
+    case VS_PROP_INT:
+    {
+      int val = g_value_get_int (value);
+      GST_DEBUG ("Setting property '%s' to %d", pdef->prop_key, val);
+      vsapi->propSetInt (data->map, pdef->prop_key, val, 0);
+      break;
+    }
+    default:
+      GST_FIXME_OBJECT (data->object, "Handle property '%s' yet",
+          g_quark_to_string (field_id));
+      break;
+  }
+  return TRUE;
+}
+
+static gboolean
+fill_function_arguments (GstVapourSynth * self, VSMap * map)
+{
+  PropMapData data;
+  data.map = map;
+  data.object = self;
+
+  gst_structure_foreach (self->properties,
+      (GstStructureForeachFunc) set_map_argument, &data);
+  return TRUE;
+}
+
 static void
 gst_vapoursynth_get_property (GObject * object, guint prop_id, GValue * value,
     GParamSpec * pspec)
@@ -150,6 +264,17 @@ static void
 gst_vapoursynth_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec)
 {
+  GstVapourSynth *self = (GstVapourSynth *) object;
+  GstVapourSynthPropertyDef *pdef;
+
+  GST_DEBUG_OBJECT (self, "property #%d", prop_id);
+  /* Get the GstVapourSynthPropertyDef */
+  pdef = get_property_def_for_id (self, prop_id);
+  if (pdef == NULL)
+    return;
+  gst_structure_id_set_value (self->properties, pdef->quark, value);
+  GST_DEBUG_OBJECT (self, "properties are now %" GST_PTR_FORMAT,
+      self->properties);
 }
 
 
@@ -234,6 +359,7 @@ extract_property_information (GstVapourSynthClass * klass)
         tofill->type = prop_type;
         tofill->optional = is_optional;
         tofill->name = g_strdup_printf ("%s-%d", prop_key, i);
+        tofill->quark = g_quark_from_string (tofill->name);
         tofill->desc =
             g_strdup_printf ("%s #%d%s", prop_key, i,
             is_optional ? " (optional)" : "");
@@ -250,6 +376,7 @@ extract_property_information (GstVapourSynthClass * klass)
       tofill->type = prop_type;
       tofill->optional = is_optional;
       tofill->name = g_strdup (prop_key);
+      tofill->quark = g_quark_from_string (tofill->name);
       tofill->desc =
           g_strdup_printf ("%s%s", prop_key, is_optional ? " (optional)" : "");
       tofill->prop_key = prop_key;
@@ -351,48 +478,52 @@ gst_vapoursynth_push_buffer (GstVapourSynth * self, const VSFrameRef * frameref)
 {
   GstFlowReturn ret = GST_FLOW_OK;
   GstBuffer *outbuf;
+  GstClockTime pts = GST_CLOCK_TIME_NONE;
   GstVideoFrame vframe;
+  gint par_n, par_d;
+  const VSMap *frameprops;
   guint i;
 
-  if (self->out_vi == NULL) {
-    GstVideoFormat out_format;
-    GstCaps *caps;
-    self->out_vi = vsapi->getVideoInfo (self->actualfilter);
-    GST_LOG_OBJECT (self, "Creating output caps");
-    gst_video_info_init (&self->outvideoinfo);
-    switch (self->out_vi->format->id) {
-      case pfYUV420P8:
-        out_format = GST_VIDEO_FORMAT_I420;
-        break;
-      default:
-        GST_ERROR_OBJECT (self, "Unknown output vsformat %d",
-            self->out_vi->format->id);
-        ret = GST_FLOW_NOT_NEGOTIATED;
-        goto beach;
-    }
-    gst_video_info_set_format (&self->outvideoinfo, out_format,
-        self->out_vi->width, self->out_vi->height);
-    self->outvideoinfo.fps_n = self->out_vi->fpsNum;
-    self->outvideoinfo.fps_d = self->out_vi->fpsDen;
-    caps = gst_video_info_to_caps (&self->outvideoinfo);
-    gst_pad_set_caps (self->srcpad, caps);
+
+  /* Print out frame properties */
+  frameprops = vsapi->getFramePropsRO (frameref);
+  debug_vs_map ((VSMap *) frameprops);
+  pts =
+      vsapi->propGetFloat (frameprops, "_AbsoluteTime", 0,
+      NULL) * (double) GST_SECOND;
+  par_n = vsapi->propGetInt (frameprops, "_SARNum", 0, NULL);
+  par_d = vsapi->propGetInt (frameprops, "_SARDen", 0, NULL);
+  /* vsapi->freeMap ((VSMap*) frameprops); */
+  if (par_n != self->outvideoinfo.par_n || par_d != self->outvideoinfo.par_d) {
+    GstCaps *outcaps;
+    self->outvideoinfo.par_n = par_n;
+    self->outvideoinfo.par_d = par_d;
+    outcaps = gst_video_info_to_caps (&self->outvideoinfo);
+    GST_DEBUG_OBJECT (self,
+        "PAR changed, setting new output caps %" GST_PTR_FORMAT, outcaps);
+    gst_pad_set_caps (self->srcpad, outcaps);
+    gst_caps_unref (outcaps);
   }
 
+  GST_DEBUG_OBJECT (self, "allocating output buffer of size %" G_GSIZE_FORMAT,
+      GST_VIDEO_INFO_SIZE (&self->outvideoinfo));
   outbuf =
       gst_buffer_new_allocate (NULL, GST_VIDEO_INFO_SIZE (&self->outvideoinfo),
       NULL);
+  GST_BUFFER_PTS (outbuf) = pts;
   gst_video_frame_map (&vframe, &self->outvideoinfo, outbuf, GST_MAP_WRITE);
   for (i = 0; i < self->out_vi->format->numPlanes; i++) {
     vs_bitblt (GST_VIDEO_FRAME_PLANE_DATA (&vframe, i),
         GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, i),
         vsapi->getReadPtr (frameref, i),
         vsapi->getStride (frameref, i),
-        vsapi->getStride (frameref, i), vsapi->getFrameHeight (frameref, i));
+        GST_VIDEO_FRAME_PLANE_STRIDE (&vframe, i),
+        vsapi->getFrameHeight (frameref, i));
   }
   gst_video_frame_unmap (&vframe);
 
   ret = gst_pad_push (self->srcpad, outbuf);
-beach:
+
   return ret;
 }
 
@@ -401,12 +532,31 @@ gst_vapoursynth_chain (GstPad * pad, GstVapourSynth * self, GstBuffer * buffer)
 {
   GstFlowReturn ret = GST_FLOW_OK;
   const VSFrameRef *frameref;
+  static char errmsg[40];
 
-  /* FIXME IMPLEMENT */
-  self->pending_buffers = g_list_append (self->pending_buffers, buffer);
+  if (G_UNLIKELY (self->actualfilter == NULL))
+    goto not_negotiated;
+
+  g_mutex_lock (&self->ring_mutex);
+  while (self->head - self->tail >= self->ring_size) {
+    GST_DEBUG_OBJECT (self, "Waiting for more room (head:%d, tail:%d)",
+        self->head, self->tail);
+    g_cond_wait (&self->write_cond, &self->ring_mutex);
+  }
+  GST_DEBUG_OBJECT (self, "Putting new buffer at head:%d", self->head);
+  self->ringbuffer[self->head++ % self->ring_size] = buffer;
+  {
+    guint i;
+    GST_DEBUG_OBJECT (self, "head:%d, tail:%d", self->head, self->tail);
+    for (i = 0; i < self->ring_size; i++)
+      GST_DEBUG_OBJECT (self, "#%d : %p", i, self->ringbuffer[i]);
+  }
+  g_cond_signal (&self->read_cond);
+  g_mutex_unlock (&self->ring_mutex);
 
   frameref =
-      vsapi->getFrame (self->out_frame_counter++, self->actualfilter, NULL, 40);
+      vsapi->getFrame (self->out_frame_counter++, self->actualfilter, errmsg,
+      40);
   if (frameref == NULL) {
     GST_ERROR_OBJECT (self, "Call to getFrame() returned nothing !");
     return GST_FLOW_ERROR;
@@ -416,10 +566,17 @@ gst_vapoursynth_chain (GstPad * pad, GstVapourSynth * self, GstBuffer * buffer)
   ret = gst_vapoursynth_push_buffer (self, frameref);
 
   return ret;
+
+not_negotiated:
+  {
+    GST_ERROR_OBJECT (self, "No filter !");
+    gst_buffer_unref (buffer);
+    return GST_FLOW_NOT_NEGOTIATED;
+  }
 }
 
 static gboolean
-gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * caps)
+gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * incaps)
 {
   GstVapourSynthClass *klass = GST_VAPOURSYNTH_GET_CLASS (self);
   gboolean ret = FALSE;
@@ -430,13 +587,13 @@ gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * caps)
   VSMap *out = vsapi->createMap ();
   VSMap *invokeres;
 
-  GST_DEBUG_OBJECT (self, "caps %" GST_PTR_FORMAT, caps);
+  GST_DEBUG_OBJECT (self, "caps %" GST_PTR_FORMAT, incaps);
 
   /* 1. Convert caps to VSVideoInfo */
   gst_video_info_init (&self->gstvideoinfo);
-  if (!gst_video_info_from_caps (&self->gstvideoinfo, caps)) {
+  if (!gst_video_info_from_caps (&self->gstvideoinfo, incaps)) {
     GST_ERROR_OBJECT (self, "Can't get video info from caps %" GST_PTR_FORMAT,
-        caps);
+        incaps);
     goto beach;
   }
   switch (GST_VIDEO_INFO_FORMAT (&self->gstvideoinfo)) {
@@ -479,6 +636,7 @@ gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * caps)
 
   /* Set our input filter as the input of the filter we want to use */
   vsapi->propSetNode (map, "clip", self->inputfilter, 0);
+  fill_function_arguments (self, map);
 
   invokeres = vsapi->invoke (klass->vsplugin, klass->func_name, map);
   errstr = vsapi->getError (invokeres);
@@ -495,9 +653,37 @@ gst_vapoursynth_set_caps (GstVapourSynth * self, GstCaps * caps)
   debug_vs_map (map);
   vsapi->freeMap (invokeres);
 
+  /* And now set downstream caps */
+  if (self->out_vi == NULL) {
+    GstVideoFormat out_format;
+    GstCaps *outcaps;
+    self->out_vi = vsapi->getVideoInfo (self->actualfilter);
+    GST_LOG_OBJECT (self, "Creating output caps");
+    gst_video_info_init (&self->outvideoinfo);
+    switch (self->out_vi->format->id) {
+      case pfYUV420P8:
+        out_format = GST_VIDEO_FORMAT_I420;
+        break;
+      default:
+        GST_ERROR_OBJECT (self, "Unknown output vsformat %d",
+            self->out_vi->format->id);
+        ret = GST_FLOW_NOT_NEGOTIATED;
+        goto beach;
+    }
+    gst_video_info_set_format (&self->outvideoinfo, out_format,
+        self->out_vi->width, self->out_vi->height);
+    self->outvideoinfo.fps_n = self->out_vi->fpsNum;
+    self->outvideoinfo.fps_d = self->out_vi->fpsDen;
+    outcaps = gst_video_info_to_caps (&self->outvideoinfo);
+    GST_DEBUG_OBJECT (self, "Setting output caps %" GST_PTR_FORMAT, outcaps);
+    gst_pad_set_caps (self->srcpad, outcaps);
+    gst_caps_unref (outcaps);
+  }
+
   ret = TRUE;
 
 beach:
+  GST_DEBUG_OBJECT (self, "Returning %d", ret);
   return ret;
 }
 
@@ -558,6 +744,13 @@ gst_vapoursynth_init (GstVapourSynth * object)
       (GstPadChainFunction) gst_vapoursynth_chain);
   gst_element_add_pad ((GstElement *) object, object->sinkpad);
 
+  object->properties = gst_structure_new_empty ("vapoursynth-properties");
+  g_mutex_init (&object->ring_mutex);
+  g_cond_init (&object->read_cond);
+  g_cond_init (&object->write_cond);
+  object->ring_size = DEFAULT_RING_SIZE;
+  object->cache_size = DEFAULT_CACHE_SIZE;
+  object->ringbuffer = g_new0 (GstBuffer *, object->ring_size);
 }
 
 
@@ -679,12 +872,34 @@ beach:
   return ret;
 }
 
+static void
+gst_vapoursynth_message_handler (int msgType, const char *msg, void *user_data)
+{
+  GstDebugLevel level;
+
+  switch (msgType) {
+    case mtDebug:
+      level = GST_LEVEL_DEBUG;
+      break;
+    case mtWarning:
+      level = GST_LEVEL_WARNING;
+      break;
+    case mtCritical:
+    case mtFatal:
+    default:
+      level = GST_LEVEL_ERROR;
+      break;
+  }
+  GST_CAT_LEVEL_LOG (GST_CAT_DEFAULT, level, NULL, "%s", msg);
+}
+
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
   GST_DEBUG_CATEGORY_INIT (vapoursynth_debug, "vapoursynth", 0, "vapoursynth");
 
   vsapi = getVapourSynthAPI (VAPOURSYNTH_API_VERSION);
+  vsapi->setMessageHandler (gst_vapoursynth_message_handler, NULL);
   if (vsapi == NULL) {
     GST_ERROR ("Couldn't get VapourSynth API !");
     return FALSE;
